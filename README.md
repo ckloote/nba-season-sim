@@ -25,6 +25,12 @@ cd /home/ubuntu/nba-season-sim
 python3 nba_sim.py --source sample --simulations 20000 --report lottery-top4
 ```
 
+Run smoke tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 Useful options:
 
 ```bash

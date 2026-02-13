@@ -1,0 +1,1 @@
+"""Margin model module scaffold."""

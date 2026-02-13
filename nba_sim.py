@@ -12,12 +12,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Dict, List, Sequence, Tuple
 
+from sim.lottery import LOTTERY_TICKET_COUNTS
+
 TOTAL_GAMES = 82
 LOTTERY_TEAMS = 14
 TOP_LOTTERY_PICKS = 4
-
-# Standard NBA lottery combo weights (out of 1000) by pre-lottery rank (1=worst record).
-LOTTERY_WEIGHTS = [140, 140, 140, 125, 105, 90, 75, 60, 45, 30, 20, 15, 10, 5]
 
 
 @dataclass(frozen=True)
@@ -224,7 +223,7 @@ def assign_draft_order(final_wins: Dict[str, int], rng: random.Random) -> List[s
     lottery_available = list(lottery_teams)
     top4: List[str] = []
     for _ in range(TOP_LOTTERY_PICKS):
-        weights = [LOTTERY_WEIGHTS[lottery_teams.index(team)] for team in lottery_available]
+        weights = [LOTTERY_TICKET_COUNTS[lottery_teams.index(team)] for team in lottery_available]
         winner = weighted_choice(lottery_available, weights, rng)
         top4.append(winner)
         lottery_available.remove(winner)
