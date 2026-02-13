@@ -6,8 +6,10 @@ import csv
 import json
 import math
 import random
+import time
 import urllib.parse
 import urllib.request
+from urllib.error import URLError
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Dict, List, Sequence, Tuple
@@ -69,7 +71,9 @@ def current_nba_season() -> str:
     return f"{start_year}-{str(start_year + 1)[-2:]}"
 
 
-def load_live_teams(season: str) -> List[TeamState]:
+def load_live_teams(
+    season: str, timeout_seconds: float, retries: int, backoff_seconds: float
+) -> List[TeamState]:
     params = {
         "College": "",
         "Conference": "",
@@ -120,24 +124,50 @@ def load_live_teams(season: str) -> List[TeamState]:
         },
     )
 
-    with urllib.request.urlopen(req, timeout=30) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    last_error: Exception | None = None
+    attempts = max(1, retries)
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except (TimeoutError, URLError) as exc:
+            last_error = exc
+            if attempt >= attempts:
+                raise RuntimeError(
+                    f"Failed to fetch live NBA data after {attempts} attempts "
+                    f"(timeout={timeout_seconds}s): {exc}"
+                ) from exc
+            time.sleep(backoff_seconds * attempt)
+    else:
+        raise RuntimeError(f"Failed to fetch live NBA data: {last_error}")
 
     result_set = payload["resultSets"][0]
     headers = result_set["headers"]
     rows = result_set["rowSet"]
     idx = {key: i for i, key in enumerate(headers)}
 
+    def value(row: Sequence[object], *names: str) -> float:
+        for name in names:
+            if name in idx and row[idx[name]] is not None:
+                return float(row[idx[name]])
+        raise KeyError(f"None of these fields exist in API response: {names}")
+
     teams: List[TeamState] = []
     for row in rows:
+        pts_for = value(row, "PTS")
+        plus_minus = value(row, "PLUS_MINUS")
+        # Some API payloads include OPP_PTS directly; others only provide point differential.
+        pts_against = value(row, "OPP_PTS") if "OPP_PTS" in idx else (pts_for - plus_minus)
+
         teams.append(
             TeamState(
                 team=str(row[idx["TEAM_NAME"]]),
                 wins=int(row[idx["W"]]),
                 losses=int(row[idx["L"]]),
                 games_played=int(row[idx["GP"]]),
-                points_for=float(row[idx["PTS"]]),
-                points_against=float(row[idx["OPP_PTS"]]),
+                points_for=pts_for,
+                points_against=pts_against,
             )
         )
 
@@ -347,6 +377,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-pick", type=int, default=14, help="Max pick column to print")
     parser.add_argument(
+        "--http-timeout",
+        type=float,
+        default=60.0,
+        help="HTTP timeout in seconds for live stats fetch",
+    )
+    parser.add_argument(
+        "--http-retries",
+        type=int,
+        default=4,
+        help="Number of fetch attempts for live stats before failing",
+    )
+    parser.add_argument(
+        "--http-backoff-seconds",
+        type=float,
+        default=2.0,
+        help="Base backoff delay between live fetch retries",
+    )
+    parser.add_argument(
         "--report",
         choices=["all-picks", "lottery-top4"],
         default="lottery-top4",
@@ -359,7 +407,12 @@ def load_teams(args: argparse.Namespace) -> List[TeamState]:
     if args.source == "sample":
         return SAMPLE_TEAMS
     if args.source == "live":
-        return load_live_teams(args.season)
+        return load_live_teams(
+            args.season,
+            timeout_seconds=args.http_timeout,
+            retries=args.http_retries,
+            backoff_seconds=args.http_backoff_seconds,
+        )
     if args.source == "csv":
         if not args.csv_path:
             raise ValueError("--csv-path is required when --source=csv")
