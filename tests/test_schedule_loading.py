@@ -151,7 +151,7 @@ class ScheduleLoadingTest(unittest.TestCase):
         self.assertEqual(30, len(report))
         warning_text = stderr.getvalue()
         self.assertIn("failed to load remaining schedule", warning_text)
-        self.assertIn("using current records only", warning_text)
+        self.assertIn("falling back to current-record simulation", warning_text)
 
     def test_mini_schedule_fixture_updates_records_deterministically(self) -> None:
         csv_text = """date,home_team_id,away_team_id,is_completed,game_id

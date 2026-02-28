@@ -865,9 +865,11 @@ def run_modular_simulations(
     initial_ptdiff = {team.team: team.points_for - team.points_against for team in teams}
 
     remaining_schedule: list[dict[str, str]]
+    schedule_load_failed = False
     try:
         remaining_schedule = load_remaining_schedule(teams, args)
     except Exception as exc:
+        schedule_load_failed = True
         print(
             "Warning: failed to load remaining schedule; falling back to current-record simulation "
             f"(play-in + lottery only). Reason: {exc}",
@@ -875,7 +877,7 @@ def run_modular_simulations(
         )
         remaining_schedule = []
 
-    if not remaining_schedule:
+    if not remaining_schedule and not schedule_load_failed:
         print(
             "Warning: remaining schedule unavailable/empty; using current records only "
             "(play-in + lottery dynamics still applied).",
@@ -906,7 +908,6 @@ def run_modular_simulations(
 
 
 def print_all_pick_results_modular(
-    teams: Sequence[TeamState],
     report: Mapping[str, Mapping[str, float | None]],
     n_sims: int,
     max_pick: int,
@@ -1246,7 +1247,6 @@ def main() -> None:
         report = run_modular_simulations(teams, args)
         if args.report == "all-picks":
             print_all_pick_results_modular(
-                teams=teams,
                 report=report,
                 n_sims=args.n_sims,
                 max_pick=args.max_pick,
