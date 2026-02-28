@@ -1,12 +1,14 @@
-# NBA Season + Lottery Simulator (Naive)
+# NBA Season + Lottery Simulator
 
-This project simulates the remainder of the current NBA regular season with a naive model:
+This project simulates NBA lottery outcomes with a Monte Carlo pipeline:
 
-- Compute each team's Pythagorean expectation from points for/against.
-- Use that expectation as each team's win probability in every remaining game.
-- Simulate remainder-of-season wins with a binomial draw.
-- Simulate lottery draws for picks 1-4 using NBA lottery weights.
-- Estimate each team's draft outcomes over many Monte Carlo runs.
+- Game outcomes come from a net-rating margin model.
+- Conference seeds use approximate tiebreak logic.
+- Play-in brackets are simulated in both conferences.
+- Lottery draws for picks 1-4 use NBA lottery weights.
+- Pick probabilities and expected pick are aggregated over many runs.
+
+Legacy Pythagorean mode is still available via `--mode legacy`.
 
 ## Data Sources
 
@@ -22,7 +24,7 @@ No external Python package is required.
 
 ```bash
 cd /home/ubuntu/nba-season-sim
-python3 nba_sim.py --source sample --simulations 20000 --report lottery-top4
+python3 nba_sim.py --source sample --n-sims 20000 --report lottery-top4
 ```
 
 Run smoke tests:
@@ -34,20 +36,22 @@ python3 -m unittest discover -s tests -v
 Useful options:
 
 ```bash
-python3 nba_sim.py --source live --season 2025-26 --simulations 100000 --report lottery-top4
-python3 nba_sim.py --source live --report all-picks --max-pick 14
+python3 nba_sim.py --source live --season 2025-26 --n-sims 100000 --report lottery-top4
+python3 nba_sim.py --source live --report all-picks --max-pick 14 --output-format table
+python3 nba_sim.py --source sample --report all-picks --output-format json
 python3 nba_sim.py --source csv --csv-path teams.csv --report lottery-top4
+python3 nba_sim.py --source csv --csv-path teams.csv --schedule-csv-path remaining_schedule.csv
+python3 nba_sim.py --mode legacy --source sample --simulations 20000 --report lottery-top4
 ```
 
 ## Output Mode You Asked For
 
-`--report lottery-top4` prints, for the simulated lottery teams (bottom 14 by projected final wins):
+`--report lottery-top4` prints, for the simulated lottery teams:
 
 - Current record
-- Pythagorean expected win rate (`Pyth%`)
-- Projected final record
 - Pick-by-pick odds for picks 1-4
 - Total `Top4` odds (chance of landing any pick 1-4)
+- Expected pick (conditional on being in the lottery)
 
 ## Container
 
@@ -64,7 +68,7 @@ Run once and exit:
 docker run --rm \
   -e RUN_MODE=once \
   -e SOURCE=live \
-  -e SIMULATIONS=100000 \
+  -e N_SIMS=100000 \
   nba-sim
 ```
 
@@ -73,7 +77,7 @@ Run once per day (default behavior):
 ```bash
 docker run -d --name nba-sim-daily \
   -e SOURCE=live \
-  -e SIMULATIONS=100000 \
+  -e N_SIMS=100000 \
   -e RUN_INTERVAL_SECONDS=86400 \
   nba-sim
 ```
@@ -89,15 +93,26 @@ docker logs -f nba-sim-daily
 - `RUN_MODE`: `daily` (default) or `once`
 - `RUN_INTERVAL_SECONDS`: default `86400`
 - `SOURCE`: `live` (recommended), `sample`, or `csv`
+- `CSV_PATH`: team-stats CSV path when `SOURCE=csv`
+- `SCHEDULE_CSV_PATH`: optional remaining-schedule CSV path
 - `SEASON`: defaults to current season (UTC date based)
-- `SIMULATIONS`: default `100000`
+- `MODE_ENGINE`: `modular` (default) or `legacy`
+- `N_SIMS`: default `100000` (`SIMULATIONS` is still accepted as a compatibility alias)
+- `SIGMA_MARGIN`: default `12.0`
+- `HCA_POINTS`: default `2.0`
+- `POSS_PER_GAME`: default `100.0`
+- `TOP_K`: default `4`
 - `EXPONENT`: default `14.0`
 - `SEED`: default `42`
 - `REPORT`: `lottery-top4` (default) or `all-picks`
+- `OUTPUT_FORMAT`: `table` (default), `json`, or `csv`
 - `EXTRA_ARGS`: optional extra CLI flags, e.g. `"--max-pick 10"`
 
 ## Notes / Simplifications
 
-- This is intentionally naive and not schedule-aware.
-- Team win totals are simulated independently, so league-wide totals are not constrained.
+- Schedule loading order in modular mode:
+  - use `--schedule-csv-path` if provided
+  - else use live schedule feed when `--source live`
+  - else no schedule (current records only)
+- If schedule loading fails, the run falls back to current records and emits a warning to stderr.
 - Pick ownership/protection and traded picks are not modeled yet.
