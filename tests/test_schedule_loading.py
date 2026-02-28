@@ -4,13 +4,111 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import patch
 
-from nba_sim import SAMPLE_TEAMS, load_schedule_from_csv, run_modular_simulations
+from nba_sim import (
+    SAMPLE_TEAMS,
+    _parse_iso_date,
+    load_live_remaining_schedule,
+    load_schedule_from_csv,
+    run_modular_simulations,
+)
 from sim.model import MarginModel
 from sim.season import SeasonState, simulate_regular_season
 
 
 class ScheduleLoadingTest(unittest.TestCase):
+    def test_parse_iso_date_supports_feed_and_iso_formats(self) -> None:
+        self.assertEqual("2026-03-01", _parse_iso_date("2026-03-01").isoformat())
+        self.assertEqual("2026-03-01", _parse_iso_date("2026-03-01T00:00:00Z").isoformat())
+        self.assertEqual("2026-03-01", _parse_iso_date("03/01/2026 00:00:00").isoformat())
+        self.assertEqual("2026-03-01", _parse_iso_date("03/01/2026").isoformat())
+        with self.assertRaises(ValueError):
+            _parse_iso_date("not-a-date")
+
+    def test_live_schedule_loader_accepts_feed_date_format(self) -> None:
+        payload = {
+            "leagueSchedule": {
+                "gameDates": [
+                    {
+                        "gameDate": "12/31/2099 00:00:00",
+                        "games": [
+                            {
+                                "gameId": "001",
+                                "gameStatus": "1",
+                                "gameStatusText": "Scheduled",
+                                "homeTeam": {"teamTricode": "BOS", "teamName": "Celtics"},
+                                "awayTeam": {"teamTricode": "NYK", "teamName": "Knicks"},
+                            },
+                            {
+                                "gameId": "002",
+                                "gameStatus": "3",
+                                "gameStatusText": "Final",
+                                "homeTeam": {"teamTricode": "BOS", "teamName": "Celtics"},
+                                "awayTeam": {"teamTricode": "NYK", "teamName": "Knicks"},
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+
+        with patch("nba_sim._request_json", return_value=payload):
+            schedule = load_live_remaining_schedule(
+                timeout_seconds=1.0,
+                retries=1,
+                backoff_seconds=0.1,
+                known_teams={"Boston Celtics", "New York Knicks"},
+            )
+
+        self.assertEqual(1, len(schedule))
+        self.assertEqual("2099-12-31", schedule[0]["date"])
+        self.assertEqual("Boston Celtics", schedule[0]["home_team_id"])
+        self.assertEqual("New York Knicks", schedule[0]["away_team_id"])
+
+    def test_live_schedule_loader_skips_placeholder_team_rows(self) -> None:
+        payload = {
+            "leagueSchedule": {
+                "gameDates": [
+                    {
+                        "gameDate": "12/31/2099 00:00:00",
+                        "games": [
+                            {
+                                "gameId": "placeholder",
+                                "gameStatus": "1",
+                                "gameStatusText": "Scheduled",
+                                "homeTeam": {
+                                    "teamId": 0,
+                                    "teamName": "",
+                                    "teamCity": "",
+                                    "teamTricode": "",
+                                },
+                                "awayTeam": {"teamTricode": "NYK", "teamName": "Knicks"},
+                            },
+                            {
+                                "gameId": "real",
+                                "gameStatus": "1",
+                                "gameStatusText": "Scheduled",
+                                "homeTeam": {"teamTricode": "BOS", "teamName": "Celtics"},
+                                "awayTeam": {"teamTricode": "NYK", "teamName": "Knicks"},
+                            },
+                        ],
+                    }
+                ]
+            }
+        }
+
+        with patch("nba_sim._request_json", return_value=payload):
+            schedule = load_live_remaining_schedule(
+                timeout_seconds=1.0,
+                retries=1,
+                backoff_seconds=0.1,
+                known_teams={"Boston Celtics", "New York Knicks"},
+            )
+
+        self.assertEqual(1, len(schedule))
+        self.assertEqual("real", schedule[0]["game_id"])
+
     def test_load_schedule_from_csv_parses_and_skips_completed(self) -> None:
         csv_text = """date,home_team_id,away_team_id,is_completed,game_id
 2026-03-01,BOS,NYK,0,g1
