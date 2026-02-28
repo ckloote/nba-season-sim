@@ -141,6 +141,7 @@ class ScheduleLoadingTest(unittest.TestCase):
             hca_points=2.0,
             sigma_margin=12.0,
             top_k=4,
+            explain_details=False,
         )
 
         stderr = io.StringIO()

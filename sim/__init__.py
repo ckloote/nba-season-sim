@@ -4,7 +4,16 @@ from .config import SimConfig
 from .lottery import assign_picks, draw_lottery_top4, lottery_slots
 from .model import MarginModel
 from .playin import simulate_playin
-from .report import build_team_report, expected_pick, p_top_k, pick_probabilities, simulate_n_runs
+from .report import (
+    SimulationDiagnostics,
+    TeamDiagnostics,
+    build_team_report,
+    expected_pick,
+    p_top_k,
+    pick_probabilities,
+    simulate_n_runs,
+    simulate_n_runs_with_diagnostics,
+)
 from .season import SeasonState, simulate_regular_season
 from .tiebreak import rank_conference_approx, seed_conferences
 
@@ -12,6 +21,8 @@ __all__ = [
     "MarginModel",
     "SeasonState",
     "SimConfig",
+    "SimulationDiagnostics",
+    "TeamDiagnostics",
     "assign_picks",
     "build_team_report",
     "draw_lottery_top4",
@@ -22,6 +33,7 @@ __all__ = [
     "rank_conference_approx",
     "seed_conferences",
     "simulate_n_runs",
+    "simulate_n_runs_with_diagnostics",
     "simulate_playin",
     "simulate_regular_season",
 ]

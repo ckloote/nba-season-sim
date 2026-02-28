@@ -16,7 +16,7 @@ from datetime import UTC, date, datetime
 from typing import Dict, List, Mapping, Sequence, Tuple
 
 from sim.lottery import LOTTERY_TICKET_COUNTS
-from sim.report import build_team_report, simulate_n_runs
+from sim.report import build_team_report, simulate_n_runs_with_diagnostics
 
 TOTAL_GAMES = 82
 LOTTERY_TEAMS = 14
@@ -882,7 +882,7 @@ def run_modular_simulations(
             file=sys.stderr,
         )
 
-    pick_counts = simulate_n_runs(
+    sim_diagnostics = simulate_n_runs_with_diagnostics(
         team_ids=team_ids,
         team_meta=team_meta,
         remaining_schedule=remaining_schedule,
@@ -896,7 +896,13 @@ def run_modular_simulations(
         hca_points=args.hca_points,
         sigma_margin=args.sigma_margin,
     )
-    return build_team_report(pick_counts, args.n_sims, top_k=args.top_k)
+    return build_team_report(
+        sim_diagnostics.pick_counts,
+        args.n_sims,
+        top_k=args.top_k,
+        team_diagnostics=sim_diagnostics.team_diagnostics,
+        explain_details=args.explain_details,
+    )
 
 
 def print_all_pick_results_modular(
@@ -905,6 +911,7 @@ def print_all_pick_results_modular(
     n_sims: int,
     max_pick: int,
     output_format: str,
+    explain_details: bool,
 ) -> None:
     if output_format == "json":
         payload = {
@@ -916,11 +923,32 @@ def print_all_pick_results_modular(
 
     if output_format == "csv":
         writer = csv.writer(sys.stdout)
-        headers = ["team", "expected_pick"] + [f"p_pick_{pick}" for pick in range(1, max_pick + 1)]
+        headers = ["team", "final_wins_mean", "expected_pick"]
+        if explain_details:
+            headers.extend(
+                ["final_wins_p10", "final_wins_p90", "lottery_prob", "avg_slot", "p_slot_1", "p_slot_1_4"]
+            )
+        headers.extend([f"p_pick_{pick}" for pick in range(1, max_pick + 1)])
         writer.writerow(headers)
         for team in sorted(report):
             expected = report[team]["expected_pick"]
-            row = [team, "" if expected is None else f"{expected:.4f}"]
+            final_wins_mean = report[team].get("final_wins_mean")
+            row = [
+                team,
+                "" if final_wins_mean is None else f"{float(final_wins_mean):.4f}",
+                "" if expected is None else f"{expected:.4f}",
+            ]
+            if explain_details:
+                row.extend(
+                    [
+                        "" if report[team].get("final_wins_p10") is None else f"{float(report[team]['final_wins_p10']):.4f}",
+                        "" if report[team].get("final_wins_p90") is None else f"{float(report[team]['final_wins_p90']):.4f}",
+                        "" if report[team].get("lottery_prob") is None else f"{float(report[team]['lottery_prob']):.6f}",
+                        "" if report[team].get("avg_slot") is None else f"{float(report[team]['avg_slot']):.4f}",
+                        "" if report[team].get("p_slot_1") is None else f"{float(report[team]['p_slot_1']):.6f}",
+                        "" if report[team].get("p_slot_1_4") is None else f"{float(report[team]['p_slot_1_4']):.6f}",
+                    ]
+                )
             for pick in range(1, max_pick + 1):
                 value = report[team][f"p_pick_{pick}"] or 0.0
                 row.append(f"{float(value):.6f}")
@@ -930,8 +958,13 @@ def print_all_pick_results_modular(
     print(f"Simulations: {n_sims}")
     print("Columns show probability of landing each pick after season + lottery simulation.")
     print()
-    columns = ["Team", "ExpPick"] + [f"P{p}" for p in range(1, max_pick + 1)]
-    widths = [24, 8] + [6] * max_pick
+    columns = ["Team", "FinalW Mean", "ExpPick"]
+    widths = [24, 11, 8]
+    if explain_details:
+        columns.extend(["P10-P90", "Lot%", "AvgSlot", "Slot1%", "Slot1-4%"])
+        widths.extend([9, 6, 7, 7, 8])
+    columns.extend([f"P{p}" for p in range(1, max_pick + 1)])
+    widths.extend([6] * max_pick)
     header = " ".join(f"{col:<{w}}" for col, w in zip(columns, widths))
     print(header)
     print("-" * len(header))
@@ -943,7 +976,28 @@ def print_all_pick_results_modular(
 
     for team in sorted(report, key=sort_key):
         expected = report[team]["expected_pick"]
-        row_values = [team, "-" if expected is None else f"{float(expected):.2f}"]
+        final_wins_mean = report[team].get("final_wins_mean")
+        row_values = [
+            team,
+            "-" if final_wins_mean is None else f"{float(final_wins_mean):.2f}",
+            "-" if expected is None else f"{float(expected):.2f}",
+        ]
+        if explain_details:
+            p10 = report[team].get("final_wins_p10")
+            p90 = report[team].get("final_wins_p90")
+            lottery_prob = report[team].get("lottery_prob")
+            avg_slot = report[team].get("avg_slot")
+            p_slot_1 = report[team].get("p_slot_1")
+            p_slot_1_4 = report[team].get("p_slot_1_4")
+            row_values.extend(
+                [
+                    "-" if p10 is None or p90 is None else f"{float(p10):.0f}-{float(p90):.0f}",
+                    "-" if lottery_prob is None else f"{100.0 * float(lottery_prob):5.2f}%",
+                    "-" if avg_slot is None else f"{float(avg_slot):.2f}",
+                    "-" if p_slot_1 is None else f"{100.0 * float(p_slot_1):5.2f}%",
+                    "-" if p_slot_1_4 is None else f"{100.0 * float(p_slot_1_4):5.2f}%",
+                ]
+            )
         for pick in range(1, max_pick + 1):
             row_values.append(f"{100.0 * float(report[team][f'p_pick_{pick}'] or 0.0):5.2f}%")
         print(" ".join(f"{val:<{w}}" for val, w in zip(row_values, widths)))
@@ -955,6 +1009,7 @@ def print_lottery_top4_summary_modular(
     n_sims: int,
     season: str,
     output_format: str,
+    explain_details: bool,
 ) -> None:
     lottery_teams = sorted((team.team for team in teams), key=lambda t: (next(x.wins for x in teams if x.team == t), t))[
         :LOTTERY_TEAMS
@@ -973,19 +1028,33 @@ def print_lottery_top4_summary_modular(
 
     if output_format == "csv":
         writer = csv.writer(sys.stdout)
-        writer.writerow(["team", "p_pick_1", "p_pick_2", "p_pick_3", "p_pick_4", "p_top_4", "expected_pick"])
+        headers = ["team", "final_wins_mean", "p_pick_1", "p_pick_2", "p_pick_3", "p_pick_4", "p_top_4", "expected_pick"]
+        if explain_details:
+            headers.extend(["final_wins_p10", "final_wins_p90", "lottery_prob", "avg_slot", "p_slot_1", "p_slot_1_4"])
+        writer.writerow(headers)
         for team in lottery_teams:
-            writer.writerow(
-                [
-                    team,
-                    f"{float(report[team]['p_pick_1'] or 0.0):.6f}",
-                    f"{float(report[team]['p_pick_2'] or 0.0):.6f}",
-                    f"{float(report[team]['p_pick_3'] or 0.0):.6f}",
-                    f"{float(report[team]['p_pick_4'] or 0.0):.6f}",
-                    f"{float(report[team]['p_top_4'] or 0.0):.6f}",
-                    "" if report[team]["expected_pick"] is None else f"{float(report[team]['expected_pick']):.4f}",
-                ]
-            )
+            row = [
+                team,
+                "" if report[team].get("final_wins_mean") is None else f"{float(report[team]['final_wins_mean']):.4f}",
+                f"{float(report[team]['p_pick_1'] or 0.0):.6f}",
+                f"{float(report[team]['p_pick_2'] or 0.0):.6f}",
+                f"{float(report[team]['p_pick_3'] or 0.0):.6f}",
+                f"{float(report[team]['p_pick_4'] or 0.0):.6f}",
+                f"{float(report[team]['p_top_4'] or 0.0):.6f}",
+                "" if report[team]["expected_pick"] is None else f"{float(report[team]['expected_pick']):.4f}",
+            ]
+            if explain_details:
+                row.extend(
+                    [
+                        "" if report[team].get("final_wins_p10") is None else f"{float(report[team]['final_wins_p10']):.4f}",
+                        "" if report[team].get("final_wins_p90") is None else f"{float(report[team]['final_wins_p90']):.4f}",
+                        "" if report[team].get("lottery_prob") is None else f"{float(report[team]['lottery_prob']):.6f}",
+                        "" if report[team].get("avg_slot") is None else f"{float(report[team]['avg_slot']):.4f}",
+                        "" if report[team].get("p_slot_1") is None else f"{float(report[team]['p_slot_1']):.6f}",
+                        "" if report[team].get("p_slot_1_4") is None else f"{float(report[team]['p_slot_1_4']):.6f}",
+                    ]
+                )
+            writer.writerow(row)
         return
 
     print(f"Season: {season}")
@@ -997,8 +1066,13 @@ def print_lottery_top4_summary_modular(
     print()
 
     team_lookup = {team.team: team for team in teams}
-    columns = ["Team", "Now", "P1", "P2", "P3", "P4", "Top4", "ExpPick"]
-    widths = [24, 9, 6, 6, 6, 6, 6, 7]
+    columns = ["Team", "Now", "FinalW Mean"]
+    widths = [24, 9, 11]
+    if explain_details:
+        columns.extend(["P10-P90", "Lot%", "AvgSlot", "Slot1%", "Slot1-4%"])
+        widths.extend([9, 6, 7, 7, 8])
+    columns.extend(["P1", "P2", "P3", "P4", "Top4", "ExpPick"])
+    widths.extend([6, 6, 6, 6, 6, 7])
     header = " ".join(f"{col:<{w}}" for col, w in zip(columns, widths))
     print(header)
     print("-" * len(header))
@@ -1010,17 +1084,42 @@ def print_lottery_top4_summary_modular(
         p4 = 100.0 * float(report[team]["p_pick_4"] or 0.0)
         top4 = 100.0 * float(report[team]["p_top_4"] or 0.0)
         expected = report[team]["expected_pick"]
+        final_wins_mean = report[team].get("final_wins_mean")
         row = [
             team,
             f"{state.wins}-{state.losses}",
+            "-" if final_wins_mean is None else f"{float(final_wins_mean):.2f}",
+        ]
+        if explain_details:
+            p10 = report[team].get("final_wins_p10")
+            p90 = report[team].get("final_wins_p90")
+            lottery_prob = report[team].get("lottery_prob")
+            avg_slot = report[team].get("avg_slot")
+            p_slot_1 = report[team].get("p_slot_1")
+            p_slot_1_4 = report[team].get("p_slot_1_4")
+            row.extend(
+                [
+                    "-" if p10 is None or p90 is None else f"{float(p10):.0f}-{float(p90):.0f}",
+                    "-" if lottery_prob is None else f"{100.0 * float(lottery_prob):5.2f}%",
+                    "-" if avg_slot is None else f"{float(avg_slot):.2f}",
+                    "-" if p_slot_1 is None else f"{100.0 * float(p_slot_1):5.2f}%",
+                    "-" if p_slot_1_4 is None else f"{100.0 * float(p_slot_1_4):5.2f}%",
+                ]
+            )
+        row.extend(
+            [
             f"{p1:5.2f}%",
             f"{p2:5.2f}%",
             f"{p3:5.2f}%",
             f"{p4:5.2f}%",
             f"{top4:5.2f}%",
             "-" if expected is None else f"{float(expected):.2f}",
-        ]
+            ]
+        )
         print(" ".join(f"{val:<{w}}" for val, w in zip(row, widths)))
+    if explain_details:
+        print()
+        print("Legend: Slot* metrics are pre-lottery slot outcomes; P1-P4/Top4 are post-draw pick outcomes.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1062,6 +1161,11 @@ def parse_args() -> argparse.Namespace:
         choices=["table", "json", "csv"],
         default="table",
         help="Report rendering format",
+    )
+    parser.add_argument(
+        "--explain-details",
+        action="store_true",
+        help="Show expanded explanation metrics (slot/final-win diagnostics).",
     )
     parser.add_argument(
         "--http-timeout",
@@ -1147,6 +1251,7 @@ def main() -> None:
                 n_sims=args.n_sims,
                 max_pick=args.max_pick,
                 output_format=args.output_format,
+                explain_details=args.explain_details,
             )
         else:
             print_lottery_top4_summary_modular(
@@ -1155,6 +1260,7 @@ def main() -> None:
                 n_sims=args.n_sims,
                 season=args.season,
                 output_format=args.output_format,
+                explain_details=args.explain_details,
             )
 
 
