@@ -9,6 +9,8 @@ run_once() {
   echo "Run timestamp (UTC): $(date -u '+%Y-%m-%d %H:%M:%S')"
   python3 "$APP_DIR/nba_sim.py" \
     --source "${SOURCE:-live}" \
+    --csv-path "${CSV_PATH:-}" \
+    --schedule-csv-path "${SCHEDULE_CSV_PATH:-}" \
     --season "${SEASON:-$(python3 - <<'PY'
 from datetime import datetime, UTC
 now = datetime.now(UTC)
@@ -16,10 +18,16 @@ start = now.year if now.month >= 10 else now.year - 1
 print(f"{start}-{str(start+1)[-2:]}")
 PY
 )}" \
-    --simulations "${SIMULATIONS:-100000}" \
+    --mode "${MODE_ENGINE:-modular}" \
+    --n-sims "${N_SIMS:-${SIMULATIONS:-100000}}" \
+    --sigma-margin "${SIGMA_MARGIN:-12.0}" \
+    --hca-points "${HCA_POINTS:-2.0}" \
+    --poss-per-game "${POSS_PER_GAME:-100.0}" \
+    --top-k "${TOP_K:-4}" \
     --exponent "${EXPONENT:-14.0}" \
     --seed "${SEED:-42}" \
     --report "${REPORT:-lottery-top4}" \
+    --output-format "${OUTPUT_FORMAT:-table}" \
     ${EXTRA_ARGS:-}
 }
 
