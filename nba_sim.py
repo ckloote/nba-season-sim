@@ -321,16 +321,32 @@ def _canonical_team_name(raw_value: str, known_teams: set[str]) -> str | None:
     if value in known_teams:
         return value
 
+    normalized_known = {_normalize_team_token(team): team for team in known_teams}
+    normalized_direct = _normalize_team_token(value)
+    if normalized_direct in normalized_known:
+        return normalized_known[normalized_direct]
+
+    def resolve_short_name(short_name: str) -> str | None:
+        if short_name in known_teams:
+            return short_name
+        for known in known_teams:
+            normalized_known_name = _normalize_team_token(known)
+            mapped_short = TEAM_NAME_ALIASES.get(normalized_known_name)
+            if mapped_short == short_name:
+                return known
+        return None
+
     tricode = value.upper()
     if tricode in TRICODE_TO_TEAM:
-        mapped = TRICODE_TO_TEAM[tricode]
-        if mapped in known_teams:
-            return mapped
+        resolved = resolve_short_name(TRICODE_TO_TEAM[tricode])
+        if resolved is not None:
+            return resolved
 
-    normalized = _normalize_team_token(value)
-    mapped_alias = TEAM_NAME_ALIASES.get(normalized)
-    if mapped_alias in known_teams:
-        return mapped_alias
+    mapped_alias = TEAM_NAME_ALIASES.get(normalized_direct)
+    if mapped_alias is not None:
+        resolved = resolve_short_name(mapped_alias)
+        if resolved is not None:
+            return resolved
     return None
 
 
@@ -465,6 +481,16 @@ def _team_name_from_live_schedule_team_obj(
     return None
 
 
+def _is_placeholder_live_team_obj(team_obj: Mapping[str, object] | None) -> bool:
+    if not isinstance(team_obj, Mapping):
+        return True
+    team_id = int(team_obj.get("teamId", 0) or 0)
+    tricode = str(team_obj.get("teamTricode", "")).strip()
+    team_name = str(team_obj.get("teamName", "")).strip()
+    team_city = str(team_obj.get("teamCity", "")).strip()
+    return team_id == 0 and tricode == "" and team_name == "" and team_city == ""
+
+
 def _is_finished_game(game: Mapping[str, object]) -> bool:
     status = str(game.get("gameStatus", "")).strip()
     if status == "3":
@@ -475,9 +501,34 @@ def _is_finished_game(game: Mapping[str, object]) -> bool:
 
 def _parse_iso_date(raw: str) -> date:
     token = raw.strip()
+    if not token:
+        raise ValueError("empty date token")
+
+    # Try ISO-like forms first, including datetime variants.
+    iso_candidates = [token]
     if "T" in token:
-        token = token.split("T", 1)[0]
-    return date.fromisoformat(token)
+        iso_candidates.append(token.split("T", 1)[0])
+    if " " in token:
+        iso_candidates.append(token.split(" ", 1)[0])
+
+    seen: set[str] = set()
+    for candidate in iso_candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            return date.fromisoformat(candidate)
+        except ValueError:
+            continue
+
+    # Fallback for NBA static schedule feed format like "10/02/2025 00:00:00".
+    for fmt in ("%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(token, fmt).date()
+        except ValueError:
+            continue
+
+    raise ValueError(f"Unsupported date format: {raw}")
 
 
 def load_live_remaining_schedule(
@@ -545,9 +596,13 @@ def load_live_remaining_schedule(
                 known_teams,
             )
             if home_team is None:
+                if _is_placeholder_live_team_obj(home_obj if isinstance(home_obj, Mapping) else None):
+                    continue
                 unknown_teams.add(str(home_obj))
                 continue
             if away_team is None:
+                if _is_placeholder_live_team_obj(away_obj if isinstance(away_obj, Mapping) else None):
+                    continue
                 unknown_teams.add(str(away_obj))
                 continue
             if home_team == away_team:
@@ -557,7 +612,7 @@ def load_live_remaining_schedule(
             schedule.append(
                 {
                     "game_id": game_id,
-                    "date": block_date,
+                    "date": parsed_date.isoformat(),
                     "home_team_id": home_team,
                     "away_team_id": away_team,
                 }
@@ -749,7 +804,18 @@ def csv_team_meta(path: str) -> dict[str, dict[str, str]]:
 
 
 def build_team_meta(teams: Sequence[TeamState], args: argparse.Namespace) -> dict[str, dict[str, str]]:
-    team_meta = {team.team: {"conference": TEAM_CONFERENCES.get(team.team, "")} for team in teams}
+    def conference_for_team_name(team_name: str) -> str:
+        direct = TEAM_CONFERENCES.get(team_name)
+        if direct in {"E", "W"}:
+            return direct
+        mapped_short = TEAM_NAME_ALIASES.get(_normalize_team_token(team_name))
+        if mapped_short is not None:
+            mapped_conf = TEAM_CONFERENCES.get(mapped_short)
+            if mapped_conf in {"E", "W"}:
+                return mapped_conf
+        return ""
+
+    team_meta = {team.team: {"conference": conference_for_team_name(team.team)} for team in teams}
 
     if args.source == "csv" and args.csv_path:
         team_meta.update(csv_team_meta(args.csv_path))
