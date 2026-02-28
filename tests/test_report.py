@@ -5,6 +5,7 @@ from sim.report import (
     expected_pick,
     p_top_k,
     pick_probabilities,
+    simulate_n_runs,
     simulate_n_runs_with_diagnostics,
 )
 
@@ -66,6 +67,30 @@ class ReportHelpersTest(unittest.TestCase):
             self.assertLessEqual(diag.p_slot_1, diag.lottery_prob + 1e-9)
             self.assertGreaterEqual(diag.p_slot_1_4, diag.p_slot_1)
             self.assertLessEqual(diag.p_slot_1_4, diag.lottery_prob + 1e-9)
+
+    def test_simulate_n_runs_matches_diagnostics_pick_counts(self) -> None:
+        east = [f"E{i}" for i in range(1, 16)]
+        west = [f"W{i}" for i in range(1, 16)]
+        team_ids = east + west
+        team_meta = {team: {"conference": "E"} for team in east}
+        team_meta.update({team: {"conference": "W"} for team in west})
+        net_ratings = {team: 0.0 for team in team_ids}
+        initial_wins = {team: 30 for team in team_ids}
+        initial_losses = {team: 30 for team in team_ids}
+
+        params = {
+            "team_ids": team_ids,
+            "team_meta": team_meta,
+            "remaining_schedule": [],
+            "net_ratings": net_ratings,
+            "initial_wins": initial_wins,
+            "initial_losses": initial_losses,
+            "n_sims": 100,
+            "rng_seed": 99,
+        }
+        counts_light = simulate_n_runs(**params)
+        diagnostics = simulate_n_runs_with_diagnostics(**params)
+        self.assertEqual(counts_light, diagnostics.pick_counts)
 
 
 if __name__ == "__main__":

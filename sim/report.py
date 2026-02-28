@@ -45,23 +45,12 @@ def _percentile(values: Sequence[int], percentile: float) -> float:
     return ordered[lo] * (1.0 - weight) + ordered[hi] * weight
 
 
-def simulate_n_runs_with_diagnostics(
-    *,
+def _validate_sim_inputs(
     team_ids: Sequence[str],
     team_meta: Mapping[str, Any],
-    remaining_schedule: Sequence[Mapping[str, Any]],
     net_ratings: Mapping[str, float],
-    initial_wins: Mapping[str, int],
-    initial_losses: Mapping[str, int],
-    initial_conf_wins: Mapping[str, int] | None = None,
-    initial_conf_losses: Mapping[str, int] | None = None,
-    initial_ptdiff: Mapping[str, float] | None = None,
-    n_sims: int = 10000,
-    rng_seed: int | None = 42,
-    poss_per_game: float = 100.0,
-    hca_points: float = 2.0,
-    sigma_margin: float = 12.0,
-) -> SimulationDiagnostics:
+    n_sims: int,
+) -> None:
     if n_sims <= 0:
         raise ValueError("n_sims must be > 0")
     if len(team_ids) != 30:
@@ -76,10 +65,40 @@ def simulate_n_runs_with_diagnostics(
     if missing_nr:
         raise ValueError(f"net_ratings missing teams: {missing_nr[:3]}")
 
+
+def _run_simulation_core(
+    *,
+    team_ids: Sequence[str],
+    team_meta: Mapping[str, Any],
+    remaining_schedule: Sequence[Mapping[str, Any]],
+    net_ratings: Mapping[str, float],
+    initial_wins: Mapping[str, int],
+    initial_losses: Mapping[str, int],
+    initial_conf_wins: Mapping[str, int] | None,
+    initial_conf_losses: Mapping[str, int] | None,
+    initial_ptdiff: Mapping[str, float] | None,
+    n_sims: int,
+    rng_seed: int | None,
+    poss_per_game: float,
+    hca_points: float,
+    sigma_margin: float,
+    collect_diagnostics: bool,
+) -> tuple[
+    dict[str, list[int]],
+    dict[str, int] | None,
+    dict[str, list[int]] | None,
+    dict[str, list[int]] | None,
+]:
     pick_counts: dict[str, list[int]] = {team: [0] * 15 for team in team_ids}
-    lottery_appearances: dict[str, int] = {team: 0 for team in team_ids}
-    slot_counts: dict[str, list[int]] = {team: [0] * 15 for team in team_ids}
-    final_wins_samples: dict[str, list[int]] = {team: [] for team in team_ids}
+    lottery_appearances: dict[str, int] | None = (
+        {team: 0 for team in team_ids} if collect_diagnostics else None
+    )
+    slot_counts: dict[str, list[int]] | None = (
+        {team: [0] * 15 for team in team_ids} if collect_diagnostics else None
+    )
+    final_wins_samples: dict[str, list[int]] | None = (
+        {team: [] for team in team_ids} if collect_diagnostics else None
+    )
     run_rng = random.Random(rng_seed)
 
     for _ in range(n_sims):
@@ -100,8 +119,9 @@ def simulate_n_runs_with_diagnostics(
         )
 
         simulate_regular_season(state, remaining_schedule, model, team_meta)
-        for team in team_ids:
-            final_wins_samples[team].append(int(state.wins.get(team, 0)))
+        if collect_diagnostics and final_wins_samples is not None:
+            for team in team_ids:
+                final_wins_samples[team].append(int(state.wins.get(team, 0)))
 
         seeds = seed_conferences(state, team_meta, run_rng)
         east_playin = simulate_playin(seeds["E"][:10], model)
@@ -109,17 +129,60 @@ def simulate_n_runs_with_diagnostics(
 
         playoff_teams = set(east_playin["playoff_seeds"]) | set(west_playin["playoff_seeds"])
         lottery_teams = [team for team in team_ids if team not in playoff_teams]
-        for team in lottery_teams:
-            lottery_appearances[team] += 1
+        if collect_diagnostics and lottery_appearances is not None:
+            for team in lottery_teams:
+                lottery_appearances[team] += 1
 
         slots = lottery_slots(lottery_teams, state, run_rng)
-        for slot_idx, team in enumerate(slots, start=1):
-            slot_counts[team][slot_idx] += 1
+        if collect_diagnostics and slot_counts is not None:
+            for slot_idx, team in enumerate(slots, start=1):
+                slot_counts[team][slot_idx] += 1
 
         top4 = draw_lottery_top4(slots, run_rng)
         picks = assign_picks(slots, top4)
         for pick, team in enumerate(picks, start=1):
             pick_counts[team][pick] += 1
+
+    return pick_counts, lottery_appearances, slot_counts, final_wins_samples
+
+
+def simulate_n_runs_with_diagnostics(
+    *,
+    team_ids: Sequence[str],
+    team_meta: Mapping[str, Any],
+    remaining_schedule: Sequence[Mapping[str, Any]],
+    net_ratings: Mapping[str, float],
+    initial_wins: Mapping[str, int],
+    initial_losses: Mapping[str, int],
+    initial_conf_wins: Mapping[str, int] | None = None,
+    initial_conf_losses: Mapping[str, int] | None = None,
+    initial_ptdiff: Mapping[str, float] | None = None,
+    n_sims: int = 10000,
+    rng_seed: int | None = 42,
+    poss_per_game: float = 100.0,
+    hca_points: float = 2.0,
+    sigma_margin: float = 12.0,
+) -> SimulationDiagnostics:
+    _validate_sim_inputs(team_ids, team_meta, net_ratings, n_sims)
+    pick_counts, lottery_appearances, slot_counts, final_wins_samples = _run_simulation_core(
+        team_ids=team_ids,
+        team_meta=team_meta,
+        remaining_schedule=remaining_schedule,
+        net_ratings=net_ratings,
+        initial_wins=initial_wins,
+        initial_losses=initial_losses,
+        initial_conf_wins=initial_conf_wins,
+        initial_conf_losses=initial_conf_losses,
+        initial_ptdiff=initial_ptdiff,
+        n_sims=n_sims,
+        rng_seed=rng_seed,
+        poss_per_game=poss_per_game,
+        hca_points=hca_points,
+        sigma_margin=sigma_margin,
+        collect_diagnostics=True,
+    )
+    if lottery_appearances is None or slot_counts is None or final_wins_samples is None:
+        raise RuntimeError("diagnostics collection failed unexpectedly")
 
     team_diagnostics: dict[str, TeamDiagnostics] = {}
     for team in team_ids:
@@ -160,7 +223,8 @@ def simulate_n_runs(
     sigma_margin: float = 12.0,
 ) -> dict[str, list[int]]:
     """Run end-to-end season + play-in + lottery simulation and return pick counts."""
-    diagnostics = simulate_n_runs_with_diagnostics(
+    _validate_sim_inputs(team_ids, team_meta, net_ratings, n_sims)
+    pick_counts, _, _, _ = _run_simulation_core(
         team_ids=team_ids,
         team_meta=team_meta,
         remaining_schedule=remaining_schedule,
@@ -175,8 +239,9 @@ def simulate_n_runs(
         poss_per_game=poss_per_game,
         hca_points=hca_points,
         sigma_margin=sigma_margin,
+        collect_diagnostics=False,
     )
-    return diagnostics.pick_counts
+    return pick_counts
 
 
 def pick_probabilities(
