@@ -18,7 +18,7 @@ if [ "$MODE" = "cli" ]; then
     --source "${SIM_SOURCE:-live}" \
     --n-sims "${SIM_N_SIMS:-20000}" \
     --seed "${SIM_SEED:-42}" \
-    --season "${SEASON:-}" \
+    ${SEASON:+--season "$SEASON"} \
     --report "${REPORT:-lottery-top4}" \
     --output-format "${OUTPUT_FORMAT:-table}" \
     ${CSV_PATH:+--csv-path "$CSV_PATH"} \

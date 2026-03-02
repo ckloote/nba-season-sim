@@ -21,6 +21,10 @@ EXPOSE 5000
 # APP_MODE=service  → starts the Flask web server (default)
 # APP_MODE=cli      → runs a single simulation and exits
 ENV APP_MODE=service
+# Force Python stdout/stderr to be unbuffered so output appears immediately
+# in Docker logs and `docker run` output rather than being held in the I/O
+# buffer until process exit.
+ENV PYTHONUNBUFFERED=1
 
 # ALB / Docker health check target.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
