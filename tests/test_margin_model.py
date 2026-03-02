@@ -28,6 +28,17 @@ class MarginModelTest(unittest.TestCase):
         self.assertEqual(-3.0, margin2)
         self.assertEqual("B", winner2)
 
+    def test_zero_margin_uses_rng_coin_flip(self) -> None:
+        model = MarginModel(
+            net_ratings={"A": 0.0, "B": 0.0},
+            poss_per_game=100.0,
+            hca_points=0.0,
+            sigma_margin=0.0,
+            rng=random.Random(1),
+        )
+        results = {model.simulate_game("A", "B")[0] for _ in range(20)}
+        self.assertEqual({"A", "B"}, results)
+
     def test_fixed_seed_produces_repeatable_sequence(self) -> None:
         ratings = {"HOME": 2.5, "AWAY": 0.5}
         model_a = MarginModel(ratings, sigma_margin=11.0, rng=random.Random(42))

@@ -37,5 +37,10 @@ class MarginModel:
         """Return (winner_team_id, sampled_margin)."""
         mu = self.expected_margin(home_team_id, away_team_id)
         margin = mu if self.sigma_margin == 0 else self.rng.normalvariate(mu, self.sigma_margin)
-        winner_team_id = home_team_id if margin > 0 else away_team_id
+        if margin > 0:
+            winner_team_id = home_team_id
+        elif margin < 0:
+            winner_team_id = away_team_id
+        else:
+            winner_team_id = self.rng.choice([home_team_id, away_team_id])
         return winner_team_id, margin
