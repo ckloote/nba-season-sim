@@ -18,13 +18,11 @@ start = now.year if now.month >= 10 else now.year - 1
 print(f"{start}-{str(start+1)[-2:]}")
 PY
 )}" \
-    --mode "${MODE_ENGINE:-modular}" \
     --n-sims "${N_SIMS:-${SIMULATIONS:-100000}}" \
     --sigma-margin "${SIGMA_MARGIN:-12.0}" \
     --hca-points "${HCA_POINTS:-2.0}" \
     --poss-per-game "${POSS_PER_GAME:-100.0}" \
     --top-k "${TOP_K:-4}" \
-    --exponent "${EXPONENT:-14.0}" \
     --seed "${SEED:-42}" \
     --report "${REPORT:-lottery-top4}" \
     --output-format "${OUTPUT_FORMAT:-table}" \

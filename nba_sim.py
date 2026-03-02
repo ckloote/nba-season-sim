@@ -4,8 +4,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
-import random
 import sys
 import time
 import urllib.parse
@@ -13,7 +11,7 @@ import urllib.request
 from urllib.error import URLError
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import List, Mapping, Sequence
 
 from sim.lottery import LOTTERY_TICKET_COUNTS
 from sim.report import build_team_report, simulate_n_runs_with_diagnostics
@@ -628,159 +626,6 @@ def load_live_remaining_schedule(
     return schedule
 
 
-def pythag_expectation(points_for: float, points_against: float, exponent: float) -> float:
-    if points_for <= 0 or points_against <= 0:
-        return 0.5
-    pf = math.pow(points_for, exponent)
-    pa = math.pow(points_against, exponent)
-    return pf / (pf + pa)
-
-
-def binomial_sample(n: int, p: float, rng: random.Random) -> int:
-    return sum(1 for _ in range(n) if rng.random() < p)
-
-
-def simulate_regular_season(
-    teams: Sequence[TeamState], exponent: float, rng: random.Random
-) -> Dict[str, int]:
-    final_wins: Dict[str, int] = {}
-    for team in teams:
-        games_remaining = max(0, TOTAL_GAMES - team.games_played)
-        p = pythag_expectation(team.points_for, team.points_against, exponent)
-        wins_rest = binomial_sample(games_remaining, p, rng)
-        final_wins[team.team] = team.wins + wins_rest
-    return final_wins
-
-
-def weighted_choice(items: Sequence[str], weights: Sequence[int], rng: random.Random) -> str:
-    total = sum(weights)
-    draw = rng.uniform(0, total)
-    cumulative = 0.0
-    for item, w in zip(items, weights):
-        cumulative += w
-        if draw <= cumulative:
-            return item
-    return items[-1]
-
-
-def assign_draft_order(final_wins: Dict[str, int], rng: random.Random) -> List[str]:
-    # Random tie-break noise models coin flips for equal records.
-    ordered = sorted(final_wins.items(), key=lambda x: (x[1], rng.random()))
-    lottery_teams = [team for team, _ in ordered[:LOTTERY_TEAMS]]
-    playoff_teams = [team for team, _ in ordered[LOTTERY_TEAMS:]]
-
-    lottery_available = list(lottery_teams)
-    top4: List[str] = []
-    for _ in range(TOP_LOTTERY_PICKS):
-        weights = [LOTTERY_TICKET_COUNTS[lottery_teams.index(team)] for team in lottery_available]
-        winner = weighted_choice(lottery_available, weights, rng)
-        top4.append(winner)
-        lottery_available.remove(winner)
-
-    remaining_lottery = [team for team in lottery_teams if team not in top4]
-
-    draft_order = []
-    draft_order.extend(top4)
-    draft_order.extend(remaining_lottery)
-    draft_order.extend(playoff_teams)
-
-    if len(draft_order) != 30:
-        raise RuntimeError(f"Draft order did not contain 30 teams: {len(draft_order)}")
-    return draft_order
-
-
-def run_simulations(
-    teams: Sequence[TeamState],
-    simulations: int,
-    exponent: float,
-    seed: int,
-) -> Tuple[Dict[str, List[int]], Dict[str, float]]:
-    rng = random.Random(seed)
-
-    pick_counts: Dict[str, List[int]] = {team.team: [0] * 30 for team in teams}
-    final_wins_total: Dict[str, float] = {team.team: 0.0 for team in teams}
-
-    for _ in range(simulations):
-        final_wins = simulate_regular_season(teams, exponent, rng)
-        for team, wins in final_wins.items():
-            final_wins_total[team] += wins
-
-        draft_order = assign_draft_order(final_wins, rng)
-        for idx, team in enumerate(draft_order):
-            pick_counts[team][idx] += 1
-
-    avg_wins = {team: total / simulations for team, total in final_wins_total.items()}
-    return pick_counts, avg_wins
-
-
-def print_all_pick_results(
-    teams: Sequence[TeamState],
-    pick_counts: Dict[str, List[int]],
-    avg_wins: Dict[str, float],
-    simulations: int,
-    max_pick: int,
-) -> None:
-    print(f"Simulations: {simulations}")
-    print("Columns show probability of landing each pick after season + lottery simulation.")
-    print()
-
-    columns = ["Team", "AvgWins"] + [f"P{p}" for p in range(1, max_pick + 1)]
-    widths = [24, 8] + [6] * max_pick
-    header = " ".join(f"{col:<{w}}" for col, w in zip(columns, widths))
-    print(header)
-    print("-" * len(header))
-
-    for team in sorted((t.team for t in teams), key=lambda t: avg_wins[t]):
-        probs = [100.0 * pick_counts[team][p - 1] / simulations for p in range(1, max_pick + 1)]
-        row_values = [team, f"{avg_wins[team]:.2f}"] + [f"{x:5.2f}%" for x in probs]
-        print(" ".join(f"{val:<{w}}" for val, w in zip(row_values, widths)))
-
-
-def print_lottery_top4_summary(
-    teams: Sequence[TeamState],
-    pick_counts: Dict[str, List[int]],
-    avg_wins: Dict[str, float],
-    simulations: int,
-    exponent: float,
-    season: str,
-) -> None:
-    team_lookup = {team.team: team for team in teams}
-    lottery_teams = sorted((team.team for team in teams), key=lambda t: avg_wins[t])[:LOTTERY_TEAMS]
-
-    print(f"Season: {season}")
-    print(f"Generated (UTC): {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Simulations: {simulations}")
-    print(f"Pythagorean exponent: {exponent}")
-    print()
-    print("Simulated lottery teams: projected final record and odds of landing a top-4 pick")
-    print()
-
-    columns = ["Team", "Now", "Pyth%", "ProjFinal", "P1", "P2", "P3", "P4", "Top4"]
-    widths = [24, 9, 7, 12, 6, 6, 6, 6, 6]
-    header = " ".join(f"{col:<{w}}" for col, w in zip(columns, widths))
-    print(header)
-    print("-" * len(header))
-
-    for team in lottery_teams:
-        t = team_lookup[team]
-        pyth = pythag_expectation(t.points_for, t.points_against, exponent)
-        proj_wins = avg_wins[team]
-        proj_losses = TOTAL_GAMES - proj_wins
-        probs = [100.0 * pick_counts[team][i] / simulations for i in range(4)]
-        top4 = sum(probs)
-        row = [
-            team,
-            f"{t.wins}-{t.losses}",
-            f"{pyth:.3f}",
-            f"{proj_wins:.2f}-{proj_losses:.2f}",
-            f"{probs[0]:5.2f}%",
-            f"{probs[1]:5.2f}%",
-            f"{probs[2]:5.2f}%",
-            f"{probs[3]:5.2f}%",
-            f"{top4:5.2f}%",
-        ]
-        print(" ".join(f"{val:<{w}}" for val, w in zip(row, widths)))
-
 
 def _normalize_conference(value: str) -> str | None:
     conf = value.strip().upper()
@@ -1148,19 +993,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Deprecated alias for --n-sims",
     )
-    parser.add_argument("--exponent", type=float, default=14.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--sigma-margin", type=float, default=12.0)
     parser.add_argument("--hca-points", type=float, default=2.0)
     parser.add_argument("--poss-per-game", type=float, default=100.0)
     parser.add_argument("--top-k", type=int, default=4, help="Top-k probability for JSON reports")
     parser.add_argument("--max-pick", type=int, default=14, help="Max pick column to print")
-    parser.add_argument(
-        "--mode",
-        choices=["modular", "legacy"],
-        default="modular",
-        help="Simulation engine mode (modular is default)",
-    )
     parser.add_argument(
         "--output-format",
         choices=["table", "json", "csv"],
@@ -1223,49 +1061,24 @@ def main() -> None:
     args = parse_args()
     teams = load_teams(args)
 
-    if args.mode == "legacy":
-        pick_counts, avg_wins = run_simulations(
-            teams=teams,
-            simulations=args.n_sims,
-            exponent=args.exponent,
-            seed=args.seed,
+    report = run_modular_simulations(teams, args)
+    if args.report == "all-picks":
+        print_all_pick_results_modular(
+            report=report,
+            n_sims=args.n_sims,
+            max_pick=args.max_pick,
+            output_format=args.output_format,
+            explain_details=args.explain_details,
         )
-        if args.report == "all-picks":
-            print_all_pick_results(
-                teams=teams,
-                pick_counts=pick_counts,
-                avg_wins=avg_wins,
-                simulations=args.n_sims,
-                max_pick=args.max_pick,
-            )
-        else:
-            print_lottery_top4_summary(
-                teams=teams,
-                pick_counts=pick_counts,
-                avg_wins=avg_wins,
-                simulations=args.n_sims,
-                exponent=args.exponent,
-                season=args.season,
-            )
     else:
-        report = run_modular_simulations(teams, args)
-        if args.report == "all-picks":
-            print_all_pick_results_modular(
-                report=report,
-                n_sims=args.n_sims,
-                max_pick=args.max_pick,
-                output_format=args.output_format,
-                explain_details=args.explain_details,
-            )
-        else:
-            print_lottery_top4_summary_modular(
-                teams=teams,
-                report=report,
-                n_sims=args.n_sims,
-                season=args.season,
-                output_format=args.output_format,
-                explain_details=args.explain_details,
-            )
+        print_lottery_top4_summary_modular(
+            teams=teams,
+            report=report,
+            n_sims=args.n_sims,
+            season=args.season,
+            output_format=args.output_format,
+            explain_details=args.explain_details,
+        )
 
 
 if __name__ == "__main__":
