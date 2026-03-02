@@ -11,7 +11,7 @@ import urllib.request
 from urllib.error import URLError
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from typing import List, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from sim.lottery import LOTTERY_TICKET_COUNTS
 from sim.report import build_team_report, simulate_n_runs_with_diagnostics
@@ -132,7 +132,7 @@ class TeamState:
     points_against: float
 
 
-SAMPLE_TEAMS: List[TeamState] = [
+SAMPLE_TEAMS: list[TeamState] = [
     TeamState("Celtics", 37, 12, 49, 120.7, 111.5),
     TeamState("Cavaliers", 39, 10, 49, 122.0, 111.6),
     TeamState("Knicks", 34, 17, 51, 118.4, 112.0),
@@ -174,7 +174,7 @@ def current_nba_season() -> str:
 
 def load_live_teams(
     season: str, timeout_seconds: float, retries: int, backoff_seconds: float
-) -> List[TeamState]:
+) -> list[TeamState]:
     params = {
         "College": "",
         "Conference": "",
@@ -254,7 +254,7 @@ def load_live_teams(
                 return float(row[idx[name]])
         raise KeyError(f"None of these fields exist in API response: {names}")
 
-    teams: List[TeamState] = []
+    teams: list[TeamState] = []
     for row in rows:
         pts_for = value(row, "PTS")
         plus_minus = value(row, "PLUS_MINUS")
@@ -277,8 +277,8 @@ def load_live_teams(
     return teams
 
 
-def load_teams_from_csv(path: str) -> List[TeamState]:
-    teams: List[TeamState] = []
+def load_teams_from_csv(path: str) -> list[TeamState]:
+    teams: list[TeamState] = []
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         required = {
@@ -861,9 +861,12 @@ def print_lottery_top4_summary_modular(
     output_format: str,
     explain_details: bool,
 ) -> None:
-    lottery_teams = sorted((team.team for team in teams), key=lambda t: (next(x.wins for x in teams if x.team == t), t))[
-        :LOTTERY_TEAMS
-    ]
+    lottery_teams = sorted(
+        report.keys(),
+        key=lambda t: sum(float(report[t].get(f"p_pick_{p}") or 0.0) for p in range(1, 15)),
+        reverse=True,
+    )[:LOTTERY_TEAMS]
+    lottery_teams.sort(key=lambda t: float(report[t]["expected_pick"] or 99.0))
 
     if output_format == "json":
         payload = {
@@ -1040,7 +1043,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load_teams(args: argparse.Namespace) -> List[TeamState]:
+def load_teams(args: argparse.Namespace) -> list[TeamState]:
     if args.source == "sample":
         return SAMPLE_TEAMS
     if args.source == "live":

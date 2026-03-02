@@ -298,7 +298,6 @@ def build_team_report(
     for team in pick_counts:
         probs = pick_probabilities(pick_counts, team, n_sims)
         payload: dict[str, float | None] = {
-            "p_pick_1": probs[1],
             "p_top_4": sum(probs[pick] for pick in range(1, 5)),
             "p_top_k": sum(probs[pick] for pick in range(1, top_k + 1)),
             "expected_pick": expected_pick(pick_counts, team, n_sims),

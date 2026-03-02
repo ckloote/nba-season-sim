@@ -13,5 +13,4 @@ class SimConfig:
     poss_per_game: float = 100.0
     hca_points: float = 2.0
     sigma_margin: float = 12.0
-    pythag_exponent: float = 14.0
     report: str = "lottery-top4"
