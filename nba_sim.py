@@ -881,7 +881,7 @@ def run_modular_simulations(
         )
         remaining_schedule = []
 
-    if not remaining_schedule and not schedule_load_failed:
+    if not remaining_schedule and not schedule_load_failed and args.source == "live":
         print(
             "Warning: remaining schedule unavailable/empty; using current records only "
             "(play-in + lottery dynamics still applied).",
