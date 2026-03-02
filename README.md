@@ -153,7 +153,9 @@ docker build -t nba-sim .
 
 ### Service mode (default)
 
-Runs the Flask web server. Mount a volume so the SQLite database survives container restarts.
+Runs the web server via **gunicorn** (not the Flask dev server). `--workers 1` is intentional: the `DailyScheduler` is an in-process thread, and multiple workers would spawn duplicate schedulers writing to the same SQLite file. For this single-writer hobby app one worker is all that's needed.
+
+Mount a volume so the SQLite database survives container restarts.
 
 ```bash
 docker run -d --name nba-sim \
@@ -220,7 +222,13 @@ Team names accept full names (`Los Angeles Lakers`), short names (`Lakers`), or 
 
 ---
 
-## AWS Deployment
+## Deployment
+
+### Railway (recommended for hobby use)
+
+Push the repo, set a few env vars, mount a volume — Railway handles HTTPS, auto-deploys, and health checks automatically. See [`docs/railway.md`](docs/railway.md) for the full guide.
+
+### AWS (enterprise / self-managed)
 
 See [`docs/runbook.md`](docs/runbook.md) for the full ECS + ALB + EFS deployment guide, including IAM roles, task definition registration, and update procedures. The task definition template is at [`deploy/task-definition.json`](deploy/task-definition.json).
 

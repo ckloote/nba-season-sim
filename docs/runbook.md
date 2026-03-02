@@ -1,5 +1,7 @@
 # NBA Sim — Deployment Runbook
 
+> **Looking for a simpler option?** For hobby/personal use, [Railway](railway.md) is recommended — no VPC, ALB, or EFS to manage.
+
 Operations guide for running `nba-sim` on AWS ECS Fargate with an Application Load Balancer and EFS-backed SQLite storage.
 
 ---

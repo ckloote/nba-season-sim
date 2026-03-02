@@ -26,4 +26,7 @@ if [ "$MODE" = "cli" ]; then
     ${EXTRA_ARGS:-}
 fi
 
-exec python serve.py
+exec gunicorn \
+  --workers 1 \
+  --bind "0.0.0.0:${PORT:-5000}" \
+  "app.web:create_app()"

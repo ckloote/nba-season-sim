@@ -1,0 +1,9 @@
+[build]
+dockerfile = "Dockerfile"
+
+[deploy]
+startCommand = "gunicorn --workers 1 --bind 0.0.0.0:$PORT 'app.web:create_app()'"
+healthcheckPath = "/healthz"
+healthcheckTimeout = 10
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
