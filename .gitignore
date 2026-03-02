@@ -4,4 +4,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.log
+*.db
+*.db-shm
+*.db-wal
 .DS_Store
