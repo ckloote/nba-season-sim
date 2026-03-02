@@ -439,12 +439,16 @@ def load_schedule_from_csv(path: str, known_teams: set[str]) -> list[dict[str, s
             if home_team == away_team:
                 continue
 
-            date_raw = _extract_csv_field(row, date_fields) or "9999-12-31"
+            date_field = _extract_csv_field(row, date_fields)
+            try:
+                date_str = _parse_iso_date(date_field).isoformat() if date_field else "9999-12-31"
+            except ValueError:
+                date_str = "9999-12-31"
             game_id = _extract_csv_field(row, ["game_id", "id"]) or f"csv-{idx}"
             schedule.append(
                 {
                     "game_id": game_id,
-                    "date": date_raw,
+                    "date": date_str,
                     "home_team_id": home_team,
                     "away_team_id": away_team,
                 }
@@ -862,7 +866,7 @@ def run_modular_simulations(
     net_ratings = {team.team: team.points_for - team.points_against for team in teams}
     initial_wins = {team.team: team.wins for team in teams}
     initial_losses = {team.team: team.losses for team in teams}
-    initial_ptdiff = {team.team: team.points_for - team.points_against for team in teams}
+    initial_ptdiff = {team.team: team.games_played * (team.points_for - team.points_against) for team in teams}
 
     remaining_schedule: list[dict[str, str]]
     schedule_load_failed = False
