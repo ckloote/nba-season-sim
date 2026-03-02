@@ -14,17 +14,29 @@ from nba_sim import (
     run_modular_simulations,
 )
 from app.scheduler import DailyScheduler
-from app.storage import fetch_latest_run, has_run_today, init_db, insert_run, insert_team_odds
+from app.storage import (
+    fetch_latest_run,
+    has_run_today,
+    init_db,
+    insert_run,
+    insert_team_odds,
+    list_seasons,
+)
 
 logger = logging.getLogger(__name__)
 
 _LOTTERY_TEAMS = 14
 
 
-def _make_job(conn, source, season, n_sims, seed, http_timeout, http_retries, http_backoff):
-    """Return a zero-argument callable that runs one simulation and persists it."""
+def _make_job(conn, source, n_sims, seed, http_timeout, http_retries, http_backoff):
+    """Return a zero-argument callable that runs one simulation and persists it.
+
+    The current NBA season is computed fresh on each invocation so the job
+    automatically handles season rollovers without a server restart.
+    """
 
     def _job() -> None:
+        season = current_nba_season()
         logger.info(
             "Simulation job starting (source=%s, season=%s, n_sims=%d)", source, season, n_sims
         )
@@ -86,23 +98,18 @@ def create_app() -> Flask:
     http_backoff = float(os.environ.get("HTTP_BACKOFF_SECONDS", "2.0"))
 
     conn = init_db(db_path)
-    season = current_nba_season()
 
-    job = _make_job(conn, source, season, n_sims, seed, http_timeout, http_retries, http_backoff)
+    # Season is computed dynamically so the service survives an October rollover.
+    job = _make_job(conn, source, n_sims, seed, http_timeout, http_retries, http_backoff)
     scheduler = DailyScheduler(
         job,
-        is_today_done=lambda: has_run_today(conn, season),
+        is_today_done=lambda: has_run_today(conn, current_nba_season()),
     )
-    scheduler.start(skip_if_ran_today=lambda: has_run_today(conn, season))
+    scheduler.start(skip_if_ran_today=lambda: has_run_today(conn, current_nba_season()))
 
     # Flask looks for templates relative to this file's directory.
     template_dir = Path(__file__).parent / "templates"
     app = Flask(__name__, template_folder=str(template_dir))
-
-    # Store shared state on the app object for access inside route handlers.
-    app.extensions["conn"] = conn
-    app.extensions["scheduler"] = scheduler
-    app.extensions["season"] = season
 
     # ------------------------------------------------------------------
     # Routes
@@ -114,7 +121,8 @@ def create_app() -> Flask:
 
     @app.get("/status")
     def status():
-        run = fetch_latest_run(conn)
+        season = current_nba_season()
+        run = fetch_latest_run(conn, season=season)
         last = None
         if run:
             last = {
@@ -124,13 +132,25 @@ def create_app() -> Flask:
                 "source": run["source"],
                 "schedule_games": run["schedule_games"],
             }
-        return jsonify({"season": season, "last_run": last}), 200
+        return jsonify({
+            "season": season,
+            "last_run": last,
+            "available_seasons": list_seasons(conn),
+        }), 200
 
     @app.get("/api/latest")
     def api_latest():
-        run = fetch_latest_run(conn)
+        season = current_nba_season()
+        run = fetch_latest_run(conn, season=season)
         if run is None:
             return jsonify({"error": "no simulation data available yet"}), 404
+        return jsonify(run), 200
+
+    @app.get("/api/season/<season>")
+    def api_season(season: str):
+        run = fetch_latest_run(conn, season=season)
+        if run is None:
+            return jsonify({"error": f"no data for season {season!r}"}), 404
         return jsonify(run), 200
 
     @app.post("/admin/rerun")
@@ -141,7 +161,8 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        run = fetch_latest_run(conn)
+        season = current_nba_season()
+        run = fetch_latest_run(conn, season=season)
         lottery_teams: list[tuple[str, dict]] = []
         if run:
             report = run["report"]

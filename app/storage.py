@@ -155,17 +155,40 @@ def insert_team_odds(
     conn.commit()
 
 
-def fetch_latest_run(conn: sqlite3.Connection) -> dict | None:
-    """Return the most recent successful run with its team odds, or None."""
-    row = conn.execute(
-        """
-        SELECT id, season, started_at, finished_at, n_sims, source, schedule_games
-        FROM runs
-        WHERE status = 'ok'
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    ).fetchone()
+def list_seasons(conn: sqlite3.Connection) -> list[str]:
+    """Return distinct seasons that have at least one successful run, newest first."""
+    rows = conn.execute(
+        "SELECT DISTINCT season FROM runs WHERE status = 'ok' ORDER BY season DESC"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def fetch_latest_run(conn: sqlite3.Connection, season: str | None = None) -> dict | None:
+    """Return the most recent successful run with its team odds, or None.
+
+    If *season* is provided only runs for that season are considered.
+    """
+    if season is not None:
+        row = conn.execute(
+            """
+            SELECT id, season, started_at, finished_at, n_sims, source, schedule_games
+            FROM runs
+            WHERE status = 'ok' AND season = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (season,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT id, season, started_at, finished_at, n_sims, source, schedule_games
+            FROM runs
+            WHERE status = 'ok'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
     if row is None:
         return None
 
