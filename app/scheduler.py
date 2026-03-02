@@ -37,6 +37,7 @@ class DailyScheduler:
         utc_hour: int | None = None,
         *,
         check_interval_seconds: float = 60.0,
+        is_today_done: Callable[[], bool] | None = None,
     ) -> None:
         if utc_hour is None:
             utc_hour = int(os.environ.get("SCHEDULE_UTC_HOUR", str(_DEFAULT_UTC_HOUR)))
@@ -46,6 +47,7 @@ class DailyScheduler:
         self._job_fn = job_fn
         self._utc_hour = utc_hour
         self._check_interval = check_interval_seconds
+        self._is_today_done = is_today_done
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -89,6 +91,28 @@ class DailyScheduler:
         if self._thread is not None:
             self._thread.join(timeout=timeout)
 
+    def trigger_now(self) -> bool:
+        """Run the job immediately in a background thread, outside the normal schedule.
+
+        Returns True if the job was launched, False if a run is already in flight.
+        Uses the same lock as the scheduler loop so the two can never overlap.
+        """
+        if not self._lock.acquire(blocking=False):
+            return False
+
+        def _run() -> None:
+            try:
+                logger.info("Manual trigger: firing job")
+                self._job_fn()
+                logger.info("Manual trigger: job completed")
+            except Exception:
+                logger.exception("Manual trigger: job raised an exception")
+            finally:
+                self._lock.release()
+
+        threading.Thread(target=_run, daemon=True, name="DailyScheduler-trigger").start()
+        return True
+
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -107,7 +131,10 @@ class DailyScheduler:
             today = now.date().isoformat()
 
             if now.hour == self._utc_hour and last_run_date != today:
-                if self._lock.acquire(blocking=False):
+                if self._is_today_done is not None and self._is_today_done():
+                    # A manual trigger already ran today — mark done and skip.
+                    last_run_date = today
+                elif self._lock.acquire(blocking=False):
                     try:
                         last_run_date = today
                         logger.info("Scheduler firing job at %s", now.isoformat())
