@@ -4,19 +4,7 @@ import random
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from .season import SeasonState
-
-
-def _conference_for(team_id: str, team_meta: Mapping[str, Any]) -> str | None:
-    value = team_meta.get(team_id)
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Mapping):
-        conference = value.get("conference")
-        return str(conference) if conference is not None else None
-    return None
+from .season import SeasonState, _conference_for
 
 
 def _win_pct(wins: int, losses: int) -> float:
