@@ -143,6 +143,59 @@ Then open `http://localhost:5000` in a browser. If no data has run yet, click **
 
 ---
 
+## Container
+
+Build the image:
+
+```bash
+docker build -t nba-sim .
+```
+
+### Service mode (default)
+
+Runs the Flask web server. Mount a volume so the SQLite database survives container restarts.
+
+```bash
+docker run -d --name nba-sim \
+  -p 5000:5000 \
+  -v $(pwd)/data:/data \
+  -e DB_PATH=/data/nba_sim.db \
+  -e SIM_SOURCE=live \
+  -e SIM_N_SIMS=20000 \
+  -e SCHEDULE_UTC_HOUR=8 \
+  nba-sim
+```
+
+Then open `http://localhost:5000`.
+
+### CLI mode
+
+Runs a single simulation, prints to stdout, and exits. Useful for one-shot runs or cron jobs.
+
+```bash
+docker run --rm \
+  -e APP_MODE=cli \
+  -e SIM_SOURCE=live \
+  -e SIM_N_SIMS=100000 \
+  -e REPORT=lottery-top4 \
+  nba-sim
+```
+
+### Container environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_MODE` | `service` | `service` (web server) or `cli` (one-shot and exit) |
+| All [service env vars](#service-environment-variables) | — | Used when `APP_MODE=service` |
+| `REPORT` | `lottery-top4` | CLI only: `lottery-top4` or `all-picks` |
+| `OUTPUT_FORMAT` | `table` | CLI only: `table`, `json`, or `csv` |
+| `SEASON` | *(auto)* | CLI only: override season e.g. `2025-26` |
+| `CSV_PATH` | — | CLI only: path to team stats CSV |
+| `SCHEDULE_CSV_PATH` | — | CLI only: path to remaining schedule CSV |
+| `EXTRA_ARGS` | — | CLI only: additional raw flags passed to `nba_sim.py` |
+
+---
+
 ## Data Sources
 
 **Live team stats** — fetched from `stats.nba.com/stats/leaguedashteamstats` (W, L, GP, PTS, OPP_PTS).

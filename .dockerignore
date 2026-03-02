@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.log
+.git/
+.gitignore
+tests/
+*.md
+run_daily.sh
