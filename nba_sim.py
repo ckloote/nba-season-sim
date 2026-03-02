@@ -132,6 +132,17 @@ class TeamState:
     points_against: float
 
 
+@dataclass(frozen=True)
+class SimulationResult:
+    season: str
+    started_at: datetime
+    finished_at: datetime
+    source: str            # "live" | "sample" | "csv"
+    n_sims: int
+    schedule_games: int    # how many remaining games were simulated
+    report: dict[str, dict[str, float | None]]
+
+
 SAMPLE_TEAMS: list[TeamState] = [
     TeamState("Celtics", 37, 12, 49, 120.7, 111.5),
     TeamState("Cavaliers", 39, 10, 49, 122.0, 111.6),
@@ -652,7 +663,12 @@ def csv_team_meta(path: str) -> dict[str, dict[str, str]]:
     return team_meta
 
 
-def build_team_meta(teams: Sequence[TeamState], args: argparse.Namespace) -> dict[str, dict[str, str]]:
+def build_team_meta(
+    teams: Sequence[TeamState],
+    *,
+    source: str,
+    csv_path: str = "",
+) -> dict[str, dict[str, str]]:
     def conference_for_team_name(team_name: str) -> str:
         direct = TEAM_CONFERENCES.get(team_name)
         if direct in {"E", "W"}:
@@ -666,8 +682,8 @@ def build_team_meta(teams: Sequence[TeamState], args: argparse.Namespace) -> dic
 
     team_meta = {team.team: {"conference": conference_for_team_name(team.team)} for team in teams}
 
-    if args.source == "csv" and args.csv_path:
-        team_meta.update(csv_team_meta(args.csv_path))
+    if source == "csv" and csv_path:
+        team_meta.update(csv_team_meta(csv_path))
 
     missing = [team for team in team_meta if team_meta[team].get("conference") not in {"E", "W"}]
     if missing:
@@ -681,57 +697,68 @@ def build_team_meta(teams: Sequence[TeamState], args: argparse.Namespace) -> dic
 
 def load_remaining_schedule(
     teams: Sequence[TeamState],
-    args: argparse.Namespace,
+    *,
+    source: str,
+    schedule_csv_path: str = "",
+    http_timeout: float = 60.0,
+    http_retries: int = 4,
+    http_backoff_seconds: float = 2.0,
 ) -> list[dict[str, str]]:
     known_teams = {team.team for team in teams}
 
-    if args.schedule_csv_path:
-        return load_schedule_from_csv(args.schedule_csv_path, known_teams)
+    if schedule_csv_path:
+        return load_schedule_from_csv(schedule_csv_path, known_teams)
 
-    if args.source == "live":
+    if source == "live":
         return load_live_remaining_schedule(
-            timeout_seconds=args.http_timeout,
-            retries=args.http_retries,
-            backoff_seconds=args.http_backoff_seconds,
+            timeout_seconds=http_timeout,
+            retries=http_retries,
+            backoff_seconds=http_backoff_seconds,
             known_teams=known_teams,
         )
-
-    if args.source == "csv":
-        return []
 
     return []
 
 
 def run_modular_simulations(
     teams: Sequence[TeamState],
-    args: argparse.Namespace,
-) -> dict[str, dict[str, float | None]]:
+    *,
+    source: str,
+    season: str,
+    n_sims: int,
+    seed: int | None,
+    poss_per_game: float,
+    hca_points: float,
+    sigma_margin: float,
+    top_k: int,
+    explain_details: bool,
+    http_timeout: float = 60.0,
+    http_retries: int = 4,
+    http_backoff_seconds: float = 2.0,
+    schedule_csv_path: str = "",
+    csv_path: str = "",
+) -> SimulationResult:
+    started_at = datetime.now(UTC)
     team_ids = [team.team for team in teams]
-    team_meta = build_team_meta(teams, args)
+    team_meta = build_team_meta(teams, source=source, csv_path=csv_path)
     net_ratings = {team.team: team.points_for - team.points_against for team in teams}
     initial_wins = {team.team: team.wins for team in teams}
     initial_losses = {team.team: team.losses for team in teams}
     initial_ptdiff = {team.team: team.games_played * (team.points_for - team.points_against) for team in teams}
 
-    remaining_schedule: list[dict[str, str]]
-    schedule_load_failed = False
     try:
-        remaining_schedule = load_remaining_schedule(teams, args)
-    except Exception as exc:
-        schedule_load_failed = True
-        print(
-            "Warning: failed to load remaining schedule; falling back to current-record simulation "
-            f"(play-in + lottery only). Reason: {exc}",
-            file=sys.stderr,
+        remaining_schedule = load_remaining_schedule(
+            teams,
+            source=source,
+            schedule_csv_path=schedule_csv_path,
+            http_timeout=http_timeout,
+            http_retries=http_retries,
+            http_backoff_seconds=http_backoff_seconds,
         )
+    except Exception:
         remaining_schedule = []
 
-    if not remaining_schedule and not schedule_load_failed and args.source == "live":
-        print(
-            "Warning: remaining schedule unavailable/empty; using current records only "
-            "(play-in + lottery dynamics still applied).",
-            file=sys.stderr,
-        )
+    schedule_games = len(remaining_schedule)
 
     sim_diagnostics = simulate_n_runs_with_diagnostics(
         team_ids=team_ids,
@@ -741,18 +768,28 @@ def run_modular_simulations(
         initial_wins=initial_wins,
         initial_losses=initial_losses,
         initial_ptdiff=initial_ptdiff,
-        n_sims=args.n_sims,
-        rng_seed=args.seed,
-        poss_per_game=args.poss_per_game,
-        hca_points=args.hca_points,
-        sigma_margin=args.sigma_margin,
+        n_sims=n_sims,
+        rng_seed=seed,
+        poss_per_game=poss_per_game,
+        hca_points=hca_points,
+        sigma_margin=sigma_margin,
     )
-    return build_team_report(
+    report = build_team_report(
         sim_diagnostics.pick_counts,
-        args.n_sims,
-        top_k=args.top_k,
+        n_sims,
+        top_k=top_k,
         team_diagnostics=sim_diagnostics.team_diagnostics,
-        explain_details=args.explain_details,
+        explain_details=explain_details,
+    )
+    finished_at = datetime.now(UTC)
+    return SimulationResult(
+        season=season,
+        started_at=started_at,
+        finished_at=finished_at,
+        source=source,
+        n_sims=n_sims,
+        schedule_games=schedule_games,
+        report=report,
     )
 
 
@@ -1064,11 +1101,33 @@ def main() -> None:
     args = parse_args()
     teams = load_teams(args)
 
-    report = run_modular_simulations(teams, args)
+    result = run_modular_simulations(
+        teams,
+        source=args.source,
+        season=args.season,
+        n_sims=args.n_sims,
+        seed=args.seed,
+        poss_per_game=args.poss_per_game,
+        hca_points=args.hca_points,
+        sigma_margin=args.sigma_margin,
+        top_k=args.top_k,
+        explain_details=args.explain_details,
+        http_timeout=args.http_timeout,
+        http_retries=args.http_retries,
+        http_backoff_seconds=args.http_backoff_seconds,
+        schedule_csv_path=args.schedule_csv_path,
+        csv_path=args.csv_path,
+    )
+    if result.schedule_games == 0 and args.source == "live":
+        print(
+            "Warning: remaining schedule unavailable/empty; using current records only "
+            "(play-in + lottery dynamics still applied).",
+            file=sys.stderr,
+        )
     if args.report == "all-picks":
         print_all_pick_results_modular(
-            report=report,
-            n_sims=args.n_sims,
+            report=result.report,
+            n_sims=result.n_sims,
             max_pick=args.max_pick,
             output_format=args.output_format,
             explain_details=args.explain_details,
@@ -1076,9 +1135,9 @@ def main() -> None:
     else:
         print_lottery_top4_summary_modular(
             teams=teams,
-            report=report,
-            n_sims=args.n_sims,
-            season=args.season,
+            report=result.report,
+            n_sims=result.n_sims,
+            season=result.season,
             output_format=args.output_format,
             explain_details=args.explain_details,
         )
