@@ -1,118 +1,176 @@
 # NBA Season + Lottery Simulator
 
-This project simulates NBA lottery outcomes with a Monte Carlo pipeline:
+Monte Carlo simulator for NBA end-of-season lottery odds. Given current team standings, it simulates the remaining schedule, play-in tournament, and NBA lottery draw thousands of times to produce pick probability distributions for every team.
 
-- Game outcomes come from a net-rating margin model.
-- Conference seeds use approximate tiebreak logic.
-- Play-in brackets are simulated in both conferences.
-- Lottery draws for picks 1-4 use NBA lottery weights.
-- Pick probabilities and expected pick are aggregated over many runs.
+**Model pipeline:**
+- Remaining games simulated using a net-rating margin model (points differential → win probability)
+- Conference seeds determined with head-to-head, conference record, and point-differential tiebreakers
+- Play-in brackets simulated in both conferences
+- Lottery draws for picks 1–4 use official NBA weighted odds
+- Pick probabilities and expected pick aggregated across all runs
 
-Legacy Pythagorean mode is still available via `--mode legacy`.
+Can run as a **one-shot CLI** or as a **persistent web service** that automatically runs daily and serves results over HTTP.
 
-## Data Sources
+---
 
-`--source live` fetches current team stats from `stats.nba.com` (`leaguedashteamstats`), including:
-
-- W/L and GP
-- Team points per game (`PTS`)
-- Opponent points per game (`OPP_PTS`)
-
-No external Python package is required.
-
-## Local Run
+## Setup
 
 ```bash
-cd /home/ubuntu/nba-season-sim
-python3 nba_sim.py --source sample --n-sims 20000 --report lottery-top4
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-Run smoke tests:
+---
+
+## CLI Mode
+
+Run a simulation and print results to stdout:
+
+```bash
+# Sample data (no network required)
+python3 nba_sim.py --source sample --n-sims 20000 --report lottery-top4
+
+# Live data from stats.nba.com
+python3 nba_sim.py --source live --n-sims 100000 --report lottery-top4
+
+# All 30 teams, JSON output
+python3 nba_sim.py --source live --report all-picks --output-format json
+
+# CSV output with expanded diagnostics
+python3 nba_sim.py --source sample --report lottery-top4 --output-format csv --explain-details
+
+# Custom team data from CSV
+python3 nba_sim.py --source csv --csv-path teams.csv --report lottery-top4
+
+# Custom team + schedule CSVs
+python3 nba_sim.py --source csv --csv-path teams.csv --schedule-csv-path remaining_schedule.csv
+```
+
+### CLI Options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `sample` | `live`, `sample`, or `csv` |
+| `--csv-path` | — | Team stats CSV (required when `--source csv`) |
+| `--schedule-csv-path` | — | Remaining schedule CSV (optional) |
+| `--season` | current season | Season string e.g. `2025-26` |
+| `--n-sims` | `20000` | Monte Carlo iterations |
+| `--seed` | `42` | RNG seed |
+| `--report` | `lottery-top4` | `lottery-top4` or `all-picks` |
+| `--output-format` | `table` | `table`, `json`, or `csv` |
+| `--max-pick` | `14` | Max pick column for `all-picks` table |
+| `--explain-details` | off | Show slot/win-distribution diagnostics |
+| `--sigma-margin` | `12.0` | Score margin std deviation |
+| `--hca-points` | `2.0` | Home court advantage (points) |
+| `--poss-per-game` | `100.0` | Possessions per game |
+| `--top-k` | `4` | Top-k probability included in JSON report |
+| `--http-timeout` | `60.0` | HTTP timeout for live data fetches (seconds) |
+| `--http-retries` | `4` | Retry attempts for live API calls |
+| `--http-backoff-seconds` | `2.0` | Base backoff between retries |
+
+### Run Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-Useful options:
+---
+
+## Service Mode
+
+Runs a Flask web server that automatically executes a simulation once per day at a configured UTC hour and serves the results over HTTP.
 
 ```bash
-python3 nba_sim.py --source live --season 2025-26 --n-sims 100000 --report lottery-top4
-python3 nba_sim.py --source live --report all-picks --max-pick 14 --output-format table
-python3 nba_sim.py --source sample --report all-picks --output-format json
-python3 nba_sim.py --source csv --csv-path teams.csv --report lottery-top4
-python3 nba_sim.py --source csv --csv-path teams.csv --schedule-csv-path remaining_schedule.csv
-python3 nba_sim.py --mode legacy --source sample --simulations 20000 --report lottery-top4
+# Sample data (no network required, good for testing)
+SIM_SOURCE=sample SIM_N_SIMS=500 .venv/bin/python serve.py
+
+# Live data (default setup)
+SIM_SOURCE=live .venv/bin/python serve.py
 ```
 
-## Output Mode You Asked For
+Then open `http://localhost:5000` in a browser. If no data has run yet, click **Run Now** on the page or call `POST /admin/rerun`.
 
-`--report lottery-top4` prints, for the simulated lottery teams:
+### Service Environment Variables
 
-- Current record
-- Pick-by-pick odds for picks 1-4
-- Total `Top4` odds (chance of landing any pick 1-4)
-- Expected pick (conditional on being in the lottery)
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `5000` | HTTP port to bind |
+| `DB_PATH` | `nba_sim.db` | SQLite database file path |
+| `SIM_SOURCE` | `live` | `live` or `sample` |
+| `SIM_N_SIMS` | `20000` | Monte Carlo iterations per run |
+| `SIM_SEED` | *(random)* | RNG seed; leave empty for non-deterministic runs |
+| `SCHEDULE_UTC_HOUR` | `8` | UTC hour at which the daily job fires (0–23) |
+| `HTTP_TIMEOUT` | `60` | Seconds per HTTP attempt for live data |
+| `HTTP_RETRIES` | `4` | Retry attempts for live API calls |
+| `HTTP_BACKOFF_SECONDS` | `2.0` | Base backoff between retries (seconds) |
 
-## Container
+### API Endpoints
 
-Build image:
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Browser-friendly lottery odds table (current season) |
+| `GET` | `/healthz` | Health check — returns `{"status":"ok"}` |
+| `GET` | `/status` | Current season, last run metadata, and list of all seasons in the DB |
+| `GET` | `/api/latest` | Full simulation report for the current season (JSON) |
+| `GET` | `/api/season/<season>` | Full report for a historical season e.g. `/api/season/2024-25` |
+| `POST` | `/admin/rerun` | Trigger an immediate simulation run; `202` if started, `409` if already running |
 
-```bash
-cd /home/ubuntu/nba-season-sim
-docker build -t nba-sim .
+#### Example `/api/latest` response shape
+
+```json
+{
+  "run_id": 7,
+  "season": "2025-26",
+  "started_at": "2026-03-01T08:00:12.345Z",
+  "finished_at": "2026-03-01T08:02:47.891Z",
+  "n_sims": 20000,
+  "source": "live",
+  "schedule_games": 312,
+  "report": {
+    "Jazz": {
+      "final_wins_mean": 22.4,
+      "p_pick_1": 0.1401,
+      "p_pick_2": 0.1347,
+      "p_top_4": 0.4012,
+      "expected_pick": 4.21,
+      ...
+    },
+    ...
+  }
+}
 ```
 
-Run once and exit:
+---
 
-```bash
-docker run --rm \
-  -e RUN_MODE=once \
-  -e SOURCE=live \
-  -e N_SIMS=100000 \
-  nba-sim
-```
+## Data Sources
 
-Run once per day (default behavior):
+**Live team stats** — fetched from `stats.nba.com/stats/leaguedashteamstats` (W, L, GP, PTS, OPP_PTS).
 
-```bash
-docker run -d --name nba-sim-daily \
-  -e SOURCE=live \
-  -e N_SIMS=100000 \
-  -e RUN_INTERVAL_SECONDS=86400 \
-  nba-sim
-```
+**Live remaining schedule** — fetched from `cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json`.
 
-Tail logs:
+If schedule loading fails the simulation falls back to current records only (no remaining games simulated). The `schedule_games` field in the response will be `0` in that case.
 
-```bash
-docker logs -f nba-sim-daily
-```
+**CSV input** — team stats and remaining schedule can both be supplied as CSVs. See column requirements below.
 
-## Environment Variables (Container)
+### Team stats CSV columns
 
-- `RUN_MODE`: `daily` (default) or `once`
-- `RUN_INTERVAL_SECONDS`: default `86400`
-- `SOURCE`: `live` (recommended), `sample`, or `csv`
-- `CSV_PATH`: team-stats CSV path when `SOURCE=csv`
-- `SCHEDULE_CSV_PATH`: optional remaining-schedule CSV path
-- `SEASON`: defaults to current season (UTC date based)
-- `MODE_ENGINE`: `modular` (default) or `legacy`
-- `N_SIMS`: default `100000` (`SIMULATIONS` is still accepted as a compatibility alias)
-- `SIGMA_MARGIN`: default `12.0`
-- `HCA_POINTS`: default `2.0`
-- `POSS_PER_GAME`: default `100.0`
-- `TOP_K`: default `4`
-- `EXPONENT`: default `14.0`
-- `SEED`: default `42`
-- `REPORT`: `lottery-top4` (default) or `all-picks`
-- `OUTPUT_FORMAT`: `table` (default), `json`, or `csv`
-- `EXTRA_ARGS`: optional extra CLI flags, e.g. `"--max-pick 10"`
+Required: `team`, `wins`, `losses`, `games_played`, `points_for`, `points_against`
+Optional: `conference` (overrides built-in conference lookup)
 
-## Notes / Simplifications
+### Schedule CSV columns
 
-- Schedule loading order in modular mode:
-  - use `--schedule-csv-path` if provided
-  - else use live schedule feed when `--source live`
-  - else no schedule (current records only)
-- If schedule loading fails, the run falls back to current records and emits a warning to stderr.
-- Pick ownership/protection and traded picks are not modeled yet.
+Required: one of `home_team`/`home_team_id`/`home`, one of `away_team`/`away_team_id`/`away`
+Optional: `date`, `game_id`, `is_completed`/`status` (completed games are skipped)
+
+Team names accept full names (`Los Angeles Lakers`), short names (`Lakers`), or tricodes (`LAL`).
+
+---
+
+## Notes
+
+- Pick ownership, protections, and traded picks are not modeled.
+- Play-in seeding uses win percentage; exact NBA tiebreaker rules are approximated.
+- The service uses SQLite with WAL mode — safe for a single-writer setup. Not intended for concurrent writers.
+- The daily scheduler fires at most once per calendar day (UTC). A manual `/admin/rerun` also counts as that day's run.
+- Historical seasons are retained in the database and queryable via `/api/season/<season>`.
