@@ -1,0 +1,70 @@
+{
+  "_comment": "ECS task definition template for nba-sim. Replace all <PLACEHOLDER> values before registering.",
+  "family": "nba-sim",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/nba-sim-task-role",
+  "containerDefinitions": [
+    {
+      "name": "nba-sim",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/nba-sim:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 5000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "APP_MODE",            "value": "service" },
+        { "name": "PORT",                "value": "5000" },
+        { "name": "DB_PATH",             "value": "/data/nba_sim.db" },
+        { "name": "SIM_SOURCE",          "value": "live" },
+        { "name": "SIM_N_SIMS",          "value": "20000" },
+        { "name": "SIM_SEED",            "value": "" },
+        { "name": "SCHEDULE_UTC_HOUR",   "value": "8" },
+        { "name": "HTTP_TIMEOUT",        "value": "60" },
+        { "name": "HTTP_RETRIES",        "value": "4" },
+        { "name": "HTTP_BACKOFF_SECONDS","value": "2.0" }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "nba-sim-data",
+          "containerPath": "/data",
+          "readOnly": false
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/healthz')\" || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/nba-sim",
+          "awslogs-region": "<REGION>",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "nba-sim-data",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "<EFS_FILE_SYSTEM_ID>",
+        "rootDirectory": "/",
+        "transitEncryption": "ENABLED"
+      }
+    }
+  ]
+}

@@ -220,6 +220,12 @@ Team names accept full names (`Los Angeles Lakers`), short names (`Lakers`), or 
 
 ---
 
+## AWS Deployment
+
+See [`docs/runbook.md`](docs/runbook.md) for the full ECS + ALB + EFS deployment guide, including IAM roles, task definition registration, and update procedures. The task definition template is at [`deploy/task-definition.json`](deploy/task-definition.json).
+
+---
+
 ## Notes
 
 - Pick ownership, protections, and traded picks are not modeled.
