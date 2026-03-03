@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import json
 import sys
 import time
 import urllib.parse
 import urllib.request
+from collections import defaultdict
 from urllib.error import URLError
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -32,7 +34,7 @@ _NBA_REQUEST_HEADERS: dict[str, str] = {
     "Origin": "https://www.nba.com",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
     "Connection": "keep-alive",
 }
 TOP_LOTTERY_PICKS = 4
@@ -200,9 +202,10 @@ def current_nba_season() -> str:
     return f"{start_year}-{str(start_year + 1)[-2:]}"
 
 
-def load_live_teams(
+def _load_teams_from_stats_api(
     season: str, timeout_seconds: float, retries: int, backoff_seconds: float
 ) -> list[TeamState]:
+    """Fetch team stats from stats.nba.com (primary source)."""
     params = {
         "College": "",
         "Conference": "",
@@ -296,6 +299,108 @@ def load_live_teams(
     return teams
 
 
+def _load_teams_from_schedule_feed(
+    timeout_seconds: float, retries: int, backoff_seconds: float
+) -> list[TeamState]:
+    """Derive current team W/L and scoring averages from the CDN schedule feed.
+
+    Used as a fallback when stats.nba.com is blocked or unreachable.
+    The CDN feed contains game-by-game scores for all completed regular-season
+    games; wins/losses and per-game averages are computed from those results.
+    Regular-season game IDs start with "002" per NBA convention.
+    """
+    urls = [
+        "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json",
+        "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json",
+    ]
+    payload: Mapping[str, object] | None = None
+    for url in urls:
+        try:
+            payload = _request_json(url, timeout_seconds, retries, backoff_seconds)
+            break
+        except RuntimeError:
+            continue
+    if payload is None:
+        raise RuntimeError("Unable to fetch CDN schedule feed for team stats")
+
+    league_schedule = payload.get("leagueSchedule")
+    if not isinstance(league_schedule, Mapping):
+        raise RuntimeError("Unexpected CDN schedule payload: missing leagueSchedule")
+    game_dates = league_schedule.get("gameDates", [])
+
+    pts_for: dict[str, list[float]] = defaultdict(list)
+    pts_against: dict[str, list[float]] = defaultdict(list)
+    # wins/losses from each game entry reflect the record *after* that game;
+    # overwriting per game gives the most-recent (current) record for each team.
+    latest_record: dict[str, tuple[int, int]] = {}
+
+    for block in game_dates:
+        if not isinstance(block, Mapping):
+            continue
+        for game in block.get("games", []):
+            if not isinstance(game, Mapping):
+                continue
+            if not str(game.get("gameId", "")).startswith("002"):
+                continue  # skip preseason (001) and playoff (004) games
+            if game.get("gameStatus") != 3:
+                continue  # skip incomplete games
+            ht = game.get("homeTeam", {})
+            at = game.get("awayTeam", {})
+            if not isinstance(ht, Mapping) or not isinstance(at, Mapping):
+                continue
+            hscore = float(ht.get("score", 0) or 0)
+            ascore = float(at.get("score", 0) or 0)
+            if hscore == 0 and ascore == 0:
+                continue
+            hname = f"{ht.get('teamCity', '')} {ht.get('teamName', '')}".strip()
+            aname = f"{at.get('teamCity', '')} {at.get('teamName', '')}".strip()
+            if not hname or not aname:
+                continue
+            pts_for[hname].append(hscore)
+            pts_against[hname].append(ascore)
+            pts_for[aname].append(ascore)
+            pts_against[aname].append(hscore)
+            latest_record[hname] = (int(ht.get("wins", 0)), int(ht.get("losses", 0)))
+            latest_record[aname] = (int(at.get("wins", 0)), int(at.get("losses", 0)))
+
+    teams: list[TeamState] = []
+    for name, pf_list in pts_for.items():
+        gp = len(pf_list)
+        wins, losses = latest_record.get(name, (0, 0))
+        teams.append(
+            TeamState(
+                team=name,
+                wins=wins,
+                losses=losses,
+                games_played=gp,
+                points_for=sum(pf_list) / gp,
+                points_against=sum(pts_against[name]) / gp,
+            )
+        )
+
+    if len(teams) < 28:
+        raise RuntimeError(f"Only derived {len(teams)} teams from CDN schedule feed; expected 30")
+    return teams
+
+
+def load_live_teams(
+    season: str, timeout_seconds: float, retries: int, backoff_seconds: float
+) -> list[TeamState]:
+    """Load current team stats, trying stats.nba.com first with a single attempt.
+
+    stats.nba.com sits behind Akamai bot-detection that silently stalls reads
+    in some environments (containers, cloud VMs). A single probe attempt with
+    the configured timeout detects this quickly; on failure the function falls
+    back to deriving records from the CDN schedule feed, which is always
+    accessible.
+    """
+    try:
+        return _load_teams_from_stats_api(season, timeout_seconds, 1, backoff_seconds)
+    except RuntimeError:
+        pass
+    return _load_teams_from_schedule_feed(timeout_seconds, retries, backoff_seconds)
+
+
 def load_teams_from_csv(path: str) -> list[TeamState]:
     teams: list[TeamState] = []
     with open(path, newline="", encoding="utf-8") as f:
@@ -379,7 +484,10 @@ def _request_json(
     for attempt in range(1, attempts + 1):
         try:
             with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
+                raw = response.read()
+                if response.headers.get("Content-Encoding") == "gzip":
+                    raw = gzip.decompress(raw)
+                payload = json.loads(raw.decode("utf-8"))
             if not isinstance(payload, Mapping):
                 raise RuntimeError(f"Unexpected JSON payload type: {type(payload)}")
             return payload
