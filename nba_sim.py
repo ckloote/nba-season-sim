@@ -18,6 +18,23 @@ from sim.report import build_team_report, simulate_n_runs_with_diagnostics
 
 TOTAL_GAMES = 82
 LOTTERY_TEAMS = 14
+
+# Headers that pass Akamai bot-detection on stats.nba.com and cdn.nba.com.
+# A realistic User-Agent and Accept-Encoding are the critical fields; the
+# rest mirror what a browser sends for a same-site XHR.
+_NBA_REQUEST_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.nba.com/",
+    "Origin": "https://www.nba.com",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+}
 TOP_LOTTERY_PICKS = 4
 
 TEAM_CONFERENCES: dict[str, str] = {
@@ -225,16 +242,7 @@ def load_live_teams(
         "Weight": "",
     }
     url = "https://stats.nba.com/stats/leaguedashteamstats?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.nba.com/",
-            "Origin": "https://www.nba.com",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    )
+    req = urllib.request.Request(url, headers=_NBA_REQUEST_HEADERS)
 
     last_error: Exception | None = None
     attempts = max(1, retries)
@@ -365,16 +373,7 @@ def _request_json(
     retries: int,
     backoff_seconds: float,
 ) -> Mapping[str, object]:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": "https://www.nba.com/",
-            "Origin": "https://www.nba.com",
-            "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    )
+    req = urllib.request.Request(url, headers=_NBA_REQUEST_HEADERS)
     attempts = max(1, retries)
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
