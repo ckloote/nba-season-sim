@@ -41,14 +41,14 @@ def _make_job(conn, source, n_sims, seed, http_timeout, http_retries, http_backo
             "Simulation job starting (source=%s, season=%s, n_sims=%d)", source, season, n_sims
         )
         if source == "live":
-            teams = load_live_teams(
+            teams, cdn_payload = load_live_teams(
                 season,
                 timeout_seconds=http_timeout,
                 retries=http_retries,
                 backoff_seconds=http_backoff,
             )
         else:
-            teams = SAMPLE_TEAMS
+            teams, cdn_payload = SAMPLE_TEAMS, None
 
         result = run_modular_simulations(
             teams,
@@ -64,6 +64,7 @@ def _make_job(conn, source, n_sims, seed, http_timeout, http_retries, http_backo
             http_timeout=http_timeout,
             http_retries=http_retries,
             http_backoff_seconds=http_backoff,
+            _cdn_payload=cdn_payload,
         )
         run_id = insert_run(conn, result)
         insert_team_odds(conn, run_id, result.report)

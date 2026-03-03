@@ -299,30 +299,33 @@ def _load_teams_from_stats_api(
     return teams
 
 
-def _load_teams_from_schedule_feed(
+_CDN_SCHEDULE_URLS = [
+    "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json",
+    "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json",
+]
+
+
+def _fetch_cdn_schedule_payload(
     timeout_seconds: float, retries: int, backoff_seconds: float
-) -> list[TeamState]:
-    """Derive current team W/L and scoring averages from the CDN schedule feed.
+) -> Mapping[str, object]:
+    """Fetch the CDN schedule JSON, trying fallback URLs on failure."""
+    errors: list[str] = []
+    for url in _CDN_SCHEDULE_URLS:
+        try:
+            return _request_json(url, timeout_seconds, retries, backoff_seconds)
+        except RuntimeError as exc:
+            errors.append(str(exc))
+    raise RuntimeError("Unable to fetch CDN schedule feed. " + " | ".join(errors[:2]))
+
+
+def _load_teams_from_schedule_payload(payload: Mapping[str, object]) -> list[TeamState]:
+    """Derive current team W/L and scoring averages from a CDN schedule payload.
 
     Used as a fallback when stats.nba.com is blocked or unreachable.
     The CDN feed contains game-by-game scores for all completed regular-season
     games; wins/losses and per-game averages are computed from those results.
     Regular-season game IDs start with "002" per NBA convention.
     """
-    urls = [
-        "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json",
-        "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json",
-    ]
-    payload: Mapping[str, object] | None = None
-    for url in urls:
-        try:
-            payload = _request_json(url, timeout_seconds, retries, backoff_seconds)
-            break
-        except RuntimeError:
-            continue
-    if payload is None:
-        raise RuntimeError("Unable to fetch CDN schedule feed for team stats")
-
     league_schedule = payload.get("leagueSchedule")
     if not isinstance(league_schedule, Mapping):
         raise RuntimeError("Unexpected CDN schedule payload: missing leagueSchedule")
@@ -385,8 +388,14 @@ def _load_teams_from_schedule_feed(
 
 def load_live_teams(
     season: str, timeout_seconds: float, retries: int, backoff_seconds: float
-) -> list[TeamState]:
+) -> tuple[list[TeamState], Mapping[str, object] | None]:
     """Load current team stats, trying stats.nba.com first with a single attempt.
+
+    Returns ``(teams, cdn_payload)`` where ``cdn_payload`` is ``None`` when the
+    stats API succeeded (no CDN fetch was made) or the raw CDN schedule payload
+    when the CDN fallback was used.  Callers that also need the remaining
+    schedule can pass the payload to ``load_remaining_schedule`` to avoid a
+    second CDN fetch.
 
     stats.nba.com sits behind Akamai bot-detection that silently stalls reads
     in some environments (containers, cloud VMs). A single probe attempt with
@@ -395,10 +404,11 @@ def load_live_teams(
     accessible.
     """
     try:
-        return _load_teams_from_stats_api(season, timeout_seconds, 1, backoff_seconds)
+        return _load_teams_from_stats_api(season, timeout_seconds, 1, backoff_seconds), None
     except RuntimeError:
         pass
-    return _load_teams_from_schedule_feed(timeout_seconds, retries, backoff_seconds)
+    payload = _fetch_cdn_schedule_payload(timeout_seconds, retries, backoff_seconds)
+    return _load_teams_from_schedule_payload(payload), payload
 
 
 def load_teams_from_csv(path: str) -> list[TeamState]:
@@ -656,21 +666,13 @@ def load_live_remaining_schedule(
     retries: int,
     backoff_seconds: float,
     known_teams: set[str],
+    *,
+    cached_payload: Mapping[str, object] | None = None,
 ) -> list[dict[str, str]]:
-    urls = [
-        "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json",
-        "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2.json",
-    ]
-    payload: Mapping[str, object] | None = None
-    errors: list[str] = []
-    for url in urls:
-        try:
-            payload = _request_json(url, timeout_seconds, retries, backoff_seconds)
-            break
-        except RuntimeError as exc:
-            errors.append(str(exc))
-    if payload is None:
-        raise RuntimeError("Unable to fetch live schedule feed. " + " | ".join(errors[:2]))
+    if cached_payload is not None:
+        payload = cached_payload
+    else:
+        payload = _fetch_cdn_schedule_payload(timeout_seconds, retries, backoff_seconds)
 
     league_schedule = payload.get("leagueSchedule")
     if not isinstance(league_schedule, Mapping):
@@ -810,6 +812,7 @@ def load_remaining_schedule(
     http_timeout: float = 60.0,
     http_retries: int = 4,
     http_backoff_seconds: float = 2.0,
+    _cdn_payload: Mapping[str, object] | None = None,
 ) -> list[dict[str, str]]:
     known_teams = {team.team for team in teams}
 
@@ -822,6 +825,7 @@ def load_remaining_schedule(
             retries=http_retries,
             backoff_seconds=http_backoff_seconds,
             known_teams=known_teams,
+            cached_payload=_cdn_payload,
         )
 
     return []
@@ -844,6 +848,7 @@ def run_modular_simulations(
     http_backoff_seconds: float = 2.0,
     schedule_csv_path: str = "",
     csv_path: str = "",
+    _cdn_payload: Mapping[str, object] | None = None,
 ) -> SimulationResult:
     started_at = datetime.now(UTC)
     team_ids = [team.team for team in teams]
@@ -861,6 +866,7 @@ def run_modular_simulations(
             http_timeout=http_timeout,
             http_retries=http_retries,
             http_backoff_seconds=http_backoff_seconds,
+            _cdn_payload=_cdn_payload,
         )
     except Exception:
         remaining_schedule = []
@@ -1187,9 +1193,11 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def load_teams(args: argparse.Namespace) -> list[TeamState]:
+def load_teams(
+    args: argparse.Namespace,
+) -> tuple[list[TeamState], Mapping[str, object] | None]:
     if args.source == "sample":
-        return SAMPLE_TEAMS
+        return SAMPLE_TEAMS, None
     if args.source == "live":
         return load_live_teams(
             args.season,
@@ -1200,13 +1208,13 @@ def load_teams(args: argparse.Namespace) -> list[TeamState]:
     if args.source == "csv":
         if not args.csv_path:
             raise ValueError("--csv-path is required when --source=csv")
-        return load_teams_from_csv(args.csv_path)
+        return load_teams_from_csv(args.csv_path), None
     raise ValueError(f"Unsupported source: {args.source}")
 
 
 def main() -> None:
     args = parse_args()
-    teams = load_teams(args)
+    teams, cdn_payload = load_teams(args)
 
     result = run_modular_simulations(
         teams,
@@ -1224,6 +1232,7 @@ def main() -> None:
         http_backoff_seconds=args.http_backoff_seconds,
         schedule_csv_path=args.schedule_csv_path,
         csv_path=args.csv_path,
+        _cdn_payload=cdn_payload,
     )
     if result.schedule_games == 0 and args.source == "live":
         print(
