@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NBA {{ season }} Lottery Odds</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 2rem 1rem;
+    }
+    h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .meta { font-size: 0.82rem; color: #94a3b8; margin-bottom: 1.5rem; }
+    .meta a { color: #60a5fa; text-decoration: none; }
+    table {
+      width: 100%;
+      max-width: 860px;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    thead th {
+      text-align: right;
+      padding: 0.45rem 0.7rem;
+      background: #1e2533;
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom: 1px solid #2d3748;
+    }
+    thead th:first-child { text-align: left; }
+    tbody tr:nth-child(odd) { background: #161b27; }
+    tbody tr:nth-child(even) { background: #1a2032; }
+    tbody tr:hover { background: #1e2d45; }
+    td {
+      padding: 0.45rem 0.7rem;
+      text-align: right;
+      border-bottom: 1px solid #1e2533;
+      white-space: nowrap;
+    }
+    td:first-child { text-align: left; font-weight: 600; }
+    .p1 { color: #fbbf24; font-weight: 700; }
+    .empty { color: #94a3b8; text-align: center; padding: 3rem; }
+    .actions { margin-bottom: 1.25rem; }
+    .btn {
+      display: inline-block;
+      padding: 0.4rem 1rem;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-weight: 600;
+      background: #2563eb;
+      color: #fff;
+    }
+    .btn:hover { background: #1d4ed8; }
+    #rerun-msg { font-size: 0.82rem; margin-left: 0.75rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <h1>NBA {{ season }} Lottery Odds</h1>
+
+  {% if run %}
+  <p class="meta">
+    Last run: {{ run.finished_at }} UTC &nbsp;·&nbsp;
+    {{ "{:,}".format(run.n_sims) }} simulations &nbsp;·&nbsp;
+    source: {{ run.source }} &nbsp;·&nbsp;
+    {{ run.schedule_games }} remaining games simulated
+  </p>
+  {% else %}
+  <p class="meta">No simulation data yet.</p>
+  {% endif %}
+
+  <div class="actions">
+    <button class="btn" onclick="triggerRerun()">Run Now</button>
+    <span id="rerun-msg"></span>
+  </div>
+
+  {% if lottery_teams %}
+  <table>
+    <thead>
+      <tr>
+        <th>Team</th>
+        <th>Exp Pick</th>
+        <th>P(Top 4)</th>
+        <th>#1</th>
+        <th>#2</th>
+        <th>#3</th>
+        <th>#4</th>
+        <th>Final W</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for name, odds in lottery_teams %}
+      <tr>
+        <td>{{ name }}</td>
+        <td>{{ "%.2f" | format(odds.expected_pick) if odds.expected_pick is not none else "—" }}</td>
+        <td>{{ "%.1f%%" | format(100 * odds.p_top_4) if odds.p_top_4 is not none else "—" }}</td>
+        <td class="p1">{{ "%.1f%%" | format(100 * odds.p_pick_1) if odds.p_pick_1 is not none else "—" }}</td>
+        <td>{{ "%.1f%%" | format(100 * odds.p_pick_2) if odds.p_pick_2 is not none else "—" }}</td>
+        <td>{{ "%.1f%%" | format(100 * odds.p_pick_3) if odds.p_pick_3 is not none else "—" }}</td>
+        <td>{{ "%.1f%%" | format(100 * odds.p_pick_4) if odds.p_pick_4 is not none else "—" }}</td>
+        <td>{{ "%.1f" | format(odds.final_wins_mean) if odds.final_wins_mean is not none else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No data available yet — trigger a run or wait for the scheduled job.</p>
+  {% endif %}
+
+  <script>
+    async function triggerRerun() {
+      const msg = document.getElementById('rerun-msg');
+      msg.textContent = 'Requesting…';
+      try {
+        const r = await fetch('/admin/rerun', { method: 'POST' });
+        const body = await r.json();
+        if (r.ok) {
+          msg.textContent = 'Simulation started — refresh in a few minutes.';
+        } else {
+          msg.textContent = body.error || ('Error ' + r.status);
+        }
+      } catch (e) {
+        msg.textContent = 'Request failed.';
+      }
+    }
+  </script>
+</body>
+</html>

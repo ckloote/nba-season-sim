@@ -1,1 +1,2 @@
-# No third-party dependencies required.
+flask>=3.0
+gunicorn>=21.0

@@ -1,8 +1,5 @@
-import argparse
-import io
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,13 +125,10 @@ class ScheduleLoadingTest(unittest.TestCase):
         self.assertEqual("Warriors", schedule[1]["away_team_id"])
 
     def test_run_modular_falls_back_when_schedule_load_fails(self) -> None:
-        args = argparse.Namespace(
+        result = run_modular_simulations(
+            SAMPLE_TEAMS,
             source="sample",
-            csv_path="",
-            schedule_csv_path="/does/not/exist.csv",
-            http_timeout=2.0,
-            http_retries=1,
-            http_backoff_seconds=0.1,
+            season="2025-26",
             n_sims=10,
             seed=7,
             poss_per_game=100.0,
@@ -142,16 +136,11 @@ class ScheduleLoadingTest(unittest.TestCase):
             sigma_margin=12.0,
             top_k=4,
             explain_details=False,
+            schedule_csv_path="/does/not/exist.csv",
         )
 
-        stderr = io.StringIO()
-        with redirect_stderr(stderr):
-            report = run_modular_simulations(SAMPLE_TEAMS, args)
-
-        self.assertEqual(30, len(report))
-        warning_text = stderr.getvalue()
-        self.assertIn("failed to load remaining schedule", warning_text)
-        self.assertIn("falling back to current-record simulation", warning_text)
+        self.assertEqual(30, len(result.report))
+        self.assertEqual(0, result.schedule_games)
 
     def test_mini_schedule_fixture_updates_records_deterministically(self) -> None:
         csv_text = """date,home_team_id,away_team_id,is_completed,game_id
