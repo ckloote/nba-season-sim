@@ -104,6 +104,7 @@ Then open `http://localhost:5000` in a browser. If no data has run yet, click **
 | `HTTP_TIMEOUT` | `60` | Seconds per HTTP attempt for live data |
 | `HTTP_RETRIES` | `4` | Retry attempts for live API calls |
 | `HTTP_BACKOFF_SECONDS` | `2.0` | Base backoff between retries (seconds) |
+| `ADMIN_TOKEN` | *(unset)* | When set, `POST /admin/rerun` requires `Authorization: Bearer <token>`; the Run Now button is hidden from the UI |
 
 ### API Endpoints
 

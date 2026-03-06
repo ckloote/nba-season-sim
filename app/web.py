@@ -5,7 +5,7 @@ import logging
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 from nba_sim import (
     SAMPLE_TEAMS,
@@ -90,6 +90,7 @@ def create_app() -> Flask:
     HTTP_BACKOFF_SECONDS Base backoff between retries (default: 2.0)
     """
     db_path = os.environ.get("DB_PATH", "nba_sim.db")
+    admin_token = os.environ.get("ADMIN_TOKEN", "").strip() or None
     source = os.environ.get("SIM_SOURCE", "live")
     n_sims = int(os.environ.get("SIM_N_SIMS", "20000"))
     seed_env = os.environ.get("SIM_SEED", "").strip()
@@ -156,6 +157,10 @@ def create_app() -> Flask:
 
     @app.post("/admin/rerun")
     def admin_rerun():
+        if admin_token is not None:
+            auth = request.headers.get("Authorization", "")
+            if auth != f"Bearer {admin_token}":
+                return jsonify({"error": "unauthorized"}), 401
         if not scheduler.trigger_now():
             return jsonify({"error": "simulation already in flight"}), 409
         return jsonify({"status": "accepted"}), 202
@@ -174,6 +179,12 @@ def create_app() -> Flask:
             )[:_LOTTERY_TEAMS]
             ranked.sort(key=lambda kv: float(kv[1].get("expected_pick") or 99.0))
             lottery_teams = ranked
-        return render_template("index.html", season=season, run=run, lottery_teams=lottery_teams)
+        return render_template(
+            "index.html",
+            season=season,
+            run=run,
+            lottery_teams=lottery_teams,
+            show_rerun_button=admin_token is None,
+        )
 
     return app

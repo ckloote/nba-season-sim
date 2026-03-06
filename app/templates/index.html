@@ -75,10 +75,12 @@
   <p class="meta">No simulation data yet.</p>
   {% endif %}
 
+  {% if show_rerun_button %}
   <div class="actions">
     <button class="btn" onclick="triggerRerun()">Run Now</button>
     <span id="rerun-msg"></span>
   </div>
+  {% endif %}
 
   {% if lottery_teams %}
   <table>
